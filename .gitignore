@@ -1,0 +1,8 @@
+node_modules/
+dist/
+out/
+*.log
+
+# Rasterised from assets/icon.svg by `npm run icon`. icon.ico is committed,
+# since the desktop shortcut points straight at it.
+assets/icon-*.png

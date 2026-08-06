@@ -1,0 +1,139 @@
+<meta charset="utf-8" />
+<title>Hangar</title>
+<link rel="stylesheet" href="../node_modules/@xterm/xterm/css/xterm.css" />
+<link rel="stylesheet" href="style.css" />
+
+<div id="app">
+  <aside id="sidebar" class="sidebar">
+    <div id="sidehead" class="side-head" title="Double-click for a new project">
+      <span class="side-title">Projects</span>
+      <button id="sidecollapse" class="icon" title="Hide projects (Ctrl+Shift+E)">&#171;</button>
+    </div>
+    <div id="projectlist" class="projectlist"></div>
+    <div id="usage" class="usage" hidden>
+      <div class="usage-row">
+        <span class="usage-name">5h</span>
+        <span class="usage-track"><span id="usage5hfill" class="usage-fill"></span></span>
+        <span id="usage5hpct" class="usage-pct"></span>
+      </div>
+      <div class="usage-row">
+        <span class="usage-name">7d</span>
+        <span class="usage-track"><span id="usage7dfill" class="usage-fill"></span></span>
+        <span id="usage7dpct" class="usage-pct"></span>
+      </div>
+      <div id="usagenote" class="usage-note"></div>
+    </div>
+
+    <div class="side-foot">
+      <span class="key">+</span> or double-click opens claude &middot; hold <span class="key">shift</span> for a shell
+      <button id="opensettings" class="side-settings" title="Settings">Settings</button>
+    </div>
+  </aside>
+
+  <main id="main" class="main">
+    <div id="tabbar" class="tabbar">
+      <button id="sideexpand" class="icon" title="Show projects (Ctrl+Shift+E)">&#187;</button>
+      <div id="tablist" class="tablist"></div>
+      <button id="newtab" class="newtab" title="New terminal (Ctrl+Shift+T)">+</button>
+    </div>
+
+    <div id="find" class="find" hidden>
+      <input id="findinput" type="text" placeholder="Find" spellcheck="false" />
+      <button id="findprev" title="Previous (Shift+Enter)">&#8593;</button>
+      <button id="findnext" title="Next (Enter)">&#8595;</button>
+      <button id="findclose" title="Close (Esc)">&#10005;</button>
+    </div>
+
+    <div id="panes" class="panes">
+      <div id="empty" class="empty">
+        <p>Pick a project and press <span class="key">+</span> to open a terminal.</p>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- Covers the whole window, so nothing behind it can be clicked or typed at
+     until the project is created or the modal is dismissed. -->
+<div id="modal" class="modal" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modaltitle">
+    <div id="modaltitle" class="modal-title">New project</div>
+    <div class="modal-sub">A folder in <span id="modalroot" class="modal-root"></span></div>
+    <input id="modalname" class="modal-input" type="text" placeholder="Project name"
+           spellcheck="false" autocomplete="off" autocapitalize="off" />
+    <div id="modalerror" class="modal-error"></div>
+    <div class="modal-actions">
+      <button id="modalcancel" class="modal-btn">Cancel</button>
+      <button id="modalcreate" class="modal-btn primary">Create project folder</button>
+    </div>
+  </div>
+</div>
+
+<!-- First run puts this up before anything else, and Settings reopens it. Same
+     card either way; only the wording and the buttons differ. -->
+<div id="setup" class="modal setup" hidden>
+  <div class="modal-card setup-card" role="dialog" aria-modal="true" aria-labelledby="setuptitle">
+    <div id="setuptitle" class="modal-title">Set up Hangar</div>
+    <p id="setupintro" class="setup-intro">
+      Two questions, and you can change both later under <b>Settings</b> at the foot of the
+      sidebar.
+    </p>
+
+    <div class="setup-field">
+      <label class="setup-label" for="setupprojects">Where your projects live</label>
+      <p class="setup-help">
+        Hangar lists the folders inside this one as your projects. Pick the folder your
+        code sits in — not a project itself, but the folder holding them all.
+      </p>
+      <div class="setup-row">
+        <input id="setupprojects" class="setup-input" type="text" spellcheck="false"
+               autocomplete="off" />
+        <button id="setupprojectsbrowse" class="modal-btn">Browse…</button>
+      </div>
+      <div id="setupprojectserror" class="modal-error"></div>
+    </div>
+
+    <div class="setup-field">
+      <label class="setup-check">
+        <input id="setupbackup" type="checkbox" />
+        <span>Keep a backup copy of my projects</span>
+      </label>
+      <p class="setup-help">
+        When a project has been finished with and sits quiet for a minute, Hangar copies it
+        to the folder below. Optional — leave it off and Hangar never writes anything
+        outside your projects folder.
+      </p>
+
+      <div id="setupbackupbox" class="setup-sub">
+        <div class="setup-row">
+          <input id="setupbackuproot" class="setup-input" type="text" spellcheck="false"
+                 autocomplete="off" />
+          <button id="setupbackupbrowse" class="modal-btn">Browse…</button>
+        </div>
+        <div id="setupbackuperror" class="modal-error"></div>
+        <p id="setupdropbox" class="setup-note" hidden></p>
+        <p class="setup-warn">
+          This folder is made to match your projects exactly, so anything you put in it
+          that is not in your projects folder gets deleted. Point it somewhere that holds
+          nothing else.
+        </p>
+      </div>
+    </div>
+
+    <div id="setupenvnote" class="setup-note" hidden></div>
+
+    <div class="modal-actions">
+      <button id="setupcancel" class="modal-btn">Cancel</button>
+      <button id="setupsave" class="modal-btn primary">Start using Hangar</button>
+    </div>
+  </div>
+</div>
+
+<script src="../node_modules/@xterm/xterm/lib/xterm.js"></script>
+<script src="../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
+<script src="../node_modules/@xterm/addon-webgl/lib/addon-webgl.js"></script>
+<script src="../node_modules/@xterm/addon-search/lib/addon-search.js"></script>
+<script src="../node_modules/@xterm/addon-web-links/lib/addon-web-links.js"></script>
+<script src="../node_modules/@xterm/addon-unicode11/lib/addon-unicode11.js"></script>
+<script src="../project-name.js"></script>
+<script src="classify.js"></script>
+<script src="renderer.js"></script>

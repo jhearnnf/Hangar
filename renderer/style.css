@@ -1,0 +1,727 @@
+:root {
+  --bg: #12141a;
+  --bar: #0d0f14;
+  --side: #0a0c11;
+  --tab: #1a1d25;
+  --tab-active: #12141a;
+  --line: #262a35;
+  --text: #c9d1d9;
+  --dim: #6e7681;
+  --faint: #4a5058;
+  --accent: #4d9cf6;
+  /* Dropbox blue, lifted a shade so it still reads on the dark sidebar. */
+  --dropbox: #3d87ff;
+
+  /* Stage colours, in the order work moves through them. */
+  --st-planning: #f4675f;
+  --st-implementing: #e8913a;
+  --st-testing: #d8c342;
+  --st-ready: #4fb45c;
+}
+
+* { box-sizing: border-box; }
+
+/* Every truncating label clips its overflow, and the line-height of 1 below
+   leaves nothing below the baseline, so descenders lose their tails. Rows are
+   fixed height and centre their contents, so a taller line box costs nothing. */
+.pname, .tname, .tab .label { line-height: 1.5; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font: 12px/1 "Segoe UI", system-ui, sans-serif;
+  user-select: none;
+  cursor: default;
+}
+
+#app {
+  display: flex;
+  height: 100vh;
+}
+
+.main {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* ------------------------------------------------------------- sidebar */
+
+.sidebar {
+  flex: 0 0 232px;
+  width: 232px;
+  display: flex;
+  flex-direction: column;
+  background: var(--side);
+  border-right: 1px solid var(--line);
+  overflow: hidden;
+}
+
+.sidebar[hidden] { display: none; }
+
+.side-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 4px 0 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.side-title {
+  flex: 1 1 auto;
+  font-size: 10px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+/* Sits directly above the hint line, sharing its muted register so the sidebar
+   still ends quietly rather than in a status panel. */
+.usage {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--line);
+}
+
+.usage[hidden] { display: none; }
+
+.usage-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.usage-name {
+  flex: 0 0 14px;
+  color: var(--faint);
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.usage-track {
+  flex: 1 1 auto;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.usage-fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: 2px;
+  background: var(--accent);
+  transition: width 200ms ease, background-color 200ms ease;
+}
+
+/* Warm, then hot. The stage palette is already the app's vocabulary for
+   "getting on with it" versus "pay attention", so the bars borrow it. */
+.usage-fill.warn { background: var(--st-implementing); }
+.usage-fill.hot { background: var(--st-planning); }
+
+.usage-pct {
+  flex: 0 0 26px;
+  color: var(--dim);
+  font-size: 9px;
+  line-height: 1.5;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-note {
+  color: var(--faint);
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.side-foot {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  border-top: 1px solid var(--line);
+  color: var(--faint);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.key {
+  display: inline-block;
+  padding: 0 4px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: #171a21;
+  color: var(--dim);
+  font-family: inherit;
+}
+
+.projectlist {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+/* Either limit spent means no project here can be worked on until the window
+   resets, so the whole list of them breathes red. Both paints are on the
+   element's own box rather than on its contents, so the mist stays put while
+   the list scrolls under it, and neither one tints the project names.
+   Deliberately faint: this sits in the corner of the eye for hours at a time,
+   and it is saying "wait", not "something is broken". The red is --st-planning
+   spelled out, since these need an alpha channel the variable cannot carry. */
+.projectlist.capped {
+  animation: capped-pulse 4s ease-in-out infinite;
+}
+
+@keyframes capped-pulse {
+  0%, 100% {
+    background-color: rgba(244, 103, 95, 0.045);
+    box-shadow: inset 0 0 26px rgba(244, 103, 95, 0.1);
+  }
+  50% {
+    background-color: rgba(244, 103, 95, 0.14);
+    box-shadow: inset 0 0 44px rgba(244, 103, 95, 0.32);
+  }
+}
+
+/* Still unmistakably red, just no longer moving. */
+@media (prefers-reduced-motion: reduce) {
+  .projectlist.capped {
+    animation: none;
+    background-color: rgba(244, 103, 95, 0.07);
+    box-shadow: inset 0 0 32px rgba(244, 103, 95, 0.16);
+  }
+}
+
+.project-row,
+.term-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 6px 0 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.project-row:hover, .term-row:hover { background: #14171e; }
+
+/* Full row height, since this is now the only thing that expands a project and
+   a 12px glyph is a fiddly thing to hit. */
+.twisty {
+  flex: 0 0 16px;
+  height: 26px;
+  line-height: 26px;
+  color: var(--faint);
+  font-size: 9px;
+  text-align: center;
+  transition: transform 90ms ease;
+}
+
+.project-row .twisty:hover { color: var(--text); }
+
+.project.open .twisty { transform: rotate(90deg); }
+
+.pname {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--dim);
+}
+
+.project.open .pname, .project-row:hover .pname { color: var(--text); }
+
+.project-row .add,
+.term-row .x {
+  flex: 0 0 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--faint);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.project-row:hover .add,
+.term-row:hover .x { opacity: 1; }
+
+.project-row .add:hover,
+.term-row .x:hover { background: #262a35; color: var(--text); }
+
+.termlist { display: none; }
+.project.open .termlist { display: block; }
+
+.term-row {
+  padding-left: 26px;
+  color: var(--dim);
+}
+
+.term-row.active { background: #1b1f28; }
+.term-row.active .tname { color: var(--text); }
+
+.dot {
+  flex: 0 0 7px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--st-ready);
+}
+
+.tname {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Stage colouring applies to both the sidebar row and the top tab. */
+.state-planning     .dot { background: var(--st-planning); }
+.state-implementing .dot { background: var(--st-implementing); }
+.state-testing      .dot { background: var(--st-testing); }
+.state-ready        .dot { background: var(--st-ready); }
+
+.state-planning     .tname, .state-planning     .label { color: var(--st-planning); }
+.state-implementing .tname, .state-implementing .label { color: var(--st-implementing); }
+.state-testing      .tname, .state-testing      .label { color: var(--st-testing); }
+.state-ready        .tname, .state-ready        .label { color: var(--st-ready); }
+
+/* A project wears the stage of its least finished terminal, so a collapsed
+   project still says whether anything inside it wants attention. The extra
+   class outweighs the open/hover rules on purpose, so a coloured name keeps
+   its colour while the project is open or under the pointer. */
+.project-row.state-planning     .pname { color: var(--st-planning); }
+.project-row.state-implementing .pname { color: var(--st-implementing); }
+.project-row.state-testing      .pname { color: var(--st-testing); }
+.project-row.state-ready        .pname { color: var(--st-ready); }
+
+/* Dropbox sync badge. Empty until there is something to say, so a sidebar of
+   untouched projects stays as quiet as it was before. The icon is drawn in one
+   colour and cut out in the sidebar's own background, so the rules below only
+   have to set a colour. */
+.bsync {
+  flex: 0 0 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 12px;
+}
+
+.bsync svg { display: block; }
+.bsync .cut { fill: var(--side); }
+.bsync .cutline { fill: none; stroke: var(--side); }
+
+.project-row.backup-stale   .bsync { color: var(--dropbox); }
+.project-row.backup-running .bsync { color: var(--dropbox); }
+.project-row.backup-done    .bsync { color: var(--st-ready); }
+.project-row.backup-failed  .bsync { color: var(--st-planning); }
+
+/* The arrows only turn while a copy is actually running; waiting to start is a
+   still icon, so movement in the sidebar always means work in progress. */
+.project-row.backup-running .bsync svg {
+  animation: sync-spin 1.3s linear infinite;
+}
+
+@keyframes sync-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* --------------------------------------------------------------- modal */
+
+/* Fixed and over everything, so the terminals underneath keep running but
+   cannot be reached until this is dealt with. */
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(6, 7, 10, 0.62);
+}
+
+.modal[hidden] { display: none; }
+
+.modal-card {
+  width: 340px;
+  max-width: calc(100vw - 32px);
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #171a21;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.55);
+}
+
+.modal-title {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.modal-sub {
+  margin-top: 2px;
+  color: var(--faint);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+/* The projects root can be a long path, and wrapping it would push the field
+   around, so it truncates on one line and keeps the whole thing in a tooltip. */
+.modal-root {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modal-input {
+  width: 100%;
+  margin-top: 12px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: #191c23;
+  color: var(--text);
+  font: inherit;
+  outline: none;
+  user-select: text;
+  cursor: text;
+}
+
+.modal-input:focus { border-color: var(--accent); }
+
+/* Holds its line whether or not there is anything to say, so the buttons stay
+   put as messages come and go. */
+.modal-error {
+  min-height: 15px;
+  margin-top: 6px;
+  color: var(--st-planning);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.modal-btn {
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: #191c23;
+  color: var(--dim);
+  font: inherit;
+  cursor: pointer;
+}
+
+.modal-btn:hover { color: var(--text); }
+
+.modal-btn.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #0b1017;
+}
+
+.modal-btn.primary:hover { background: #62a9f8; color: #0b1017; }
+
+.modal-btn:disabled {
+  border-color: var(--line);
+  background: #191c23;
+  color: var(--faint);
+  cursor: default;
+}
+
+/* --------------------------------------------------------------- setup */
+
+/* The setup card is the new-project modal grown up: same backdrop, same
+   controls, but wide enough for a Windows path to sit on one line and tall
+   enough to explain itself. It is the first thing a new install shows, so it
+   carries more prose than anything else in here. */
+
+.setup-card {
+  width: 520px;
+  padding: 20px;
+  /* A short window still has to be able to reach the buttons. */
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+}
+
+.setup-intro {
+  margin: 6px 0 0;
+  color: var(--dim);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.setup-intro[hidden] { display: none; }
+
+.setup-field {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.setup-label {
+  display: block;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.setup-help {
+  margin: 4px 0 0;
+  color: var(--dim);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.setup-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+/* The path field takes whatever the Browse button does not. */
+.setup-row .setup-input { flex: 1 1 auto; min-width: 0; }
+.setup-row .modal-btn { flex: 0 0 auto; }
+
+.setup-input {
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: #191c23;
+  color: var(--text);
+  font: inherit;
+  outline: none;
+  user-select: text;
+  cursor: text;
+}
+
+.setup-input:focus { border-color: var(--accent); }
+
+.setup-input:disabled {
+  color: var(--faint);
+  cursor: default;
+}
+
+.setup-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.setup-check input { accent-color: var(--accent); cursor: pointer; }
+
+/* Dimmed rather than hidden when backups are off: the folder stays visible so
+   turning them back on is one click, and the block does not jump about. */
+.setup-sub { margin-top: 4px; }
+.setup-sub.off { opacity: 0.4; }
+
+.setup-note {
+  margin: 6px 0 0;
+  color: var(--accent);
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.setup-note[hidden] { display: none; }
+
+/* The one thing in here worth reading before clicking, since /MIR deletes. */
+.setup-warn {
+  margin: 8px 0 0;
+  color: var(--st-implementing);
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.setup-card .modal-actions { margin-top: 20px; }
+
+/* A quiet link at the foot of the sidebar rather than a button — it is reached
+   once and then not again for weeks. */
+.side-settings {
+  display: block;
+  margin-top: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--faint);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.side-settings:hover { color: var(--dim); }
+
+/* ------------------------------------------------------------- tab bar */
+
+.tabbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: stretch;
+  background: var(--bar);
+  border-bottom: 1px solid var(--line);
+  height: 32px;
+}
+
+.tabbar[hidden] { display: none; }
+
+.icon {
+  flex: 0 0 28px;
+  border: 0;
+  background: transparent;
+  color: var(--faint);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.icon:hover { color: var(--text); }
+
+.tablist {
+  display: flex;
+  align-items: stretch;
+  overflow-x: auto;
+  scrollbar-width: none;
+  flex: 1 1 auto;
+}
+
+.tablist::-webkit-scrollbar { display: none; }
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 8px 0 12px;
+  max-width: 240px;
+  min-width: 120px;
+  border-right: 1px solid var(--line);
+  background: var(--tab);
+  color: var(--dim);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.tab.active {
+  background: var(--tab-active);
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.tab .label {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--dim);
+}
+
+.tab .close {
+  flex: 0 0 16px;
+  height: 16px;
+  line-height: 16px;
+  text-align: center;
+  border-radius: 3px;
+  opacity: 0;
+  font-size: 11px;
+}
+
+.tab:hover .close, .tab.active .close { opacity: 0.6; }
+.tab .close:hover { opacity: 1; background: #333845; }
+
+.newtab {
+  flex: 0 0 34px;
+  border: 0;
+  background: transparent;
+  color: var(--dim);
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.newtab:hover { color: var(--text); background: var(--tab); }
+
+/* ---------------------------------------------------------------- find */
+
+.find {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 4px;
+  padding: 5px 8px;
+  background: var(--bar);
+  border-bottom: 1px solid var(--line);
+}
+
+.find[hidden] { display: none; }
+
+.find input {
+  flex: 1 1 auto;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: #191c23;
+  color: var(--text);
+  font: inherit;
+  outline: none;
+  user-select: text;
+}
+
+.find input:focus { border-color: var(--accent); }
+
+.find button {
+  width: 26px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: #191c23;
+  color: var(--dim);
+  cursor: pointer;
+}
+
+.find button:hover { color: var(--text); }
+
+/* --------------------------------------------------------------- panes */
+
+.panes {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.pane {
+  position: absolute;
+  inset: 0;
+  padding: 6px 4px 6px 10px;
+}
+
+.pane[hidden] { display: none; }
+
+.empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--faint);
+  font-size: 13px;
+}
+
+.empty[hidden] { display: none; }
+
+.xterm .xterm-viewport::-webkit-scrollbar { width: 10px; }
+.xterm .xterm-viewport::-webkit-scrollbar-track { background: transparent; }
+.xterm .xterm-viewport::-webkit-scrollbar-thumb {
+  background: #333845;
+  border-radius: 5px;
+}
+.xterm .xterm-viewport::-webkit-scrollbar-thumb:hover { background: #444b5c; }
+
+.projectlist::-webkit-scrollbar { width: 8px; }
+.projectlist::-webkit-scrollbar-track { background: transparent; }
+.projectlist::-webkit-scrollbar-thumb { background: #22262f; border-radius: 4px; }
