@@ -20,6 +20,47 @@ The first launch asks two questions — where your projects live, and whether to
 copies of them — and nothing is written anywhere until you answer. Both are changeable
 afterwards from **Settings** at the foot of the sidebar.
 
+## On a Mac
+
+`npm install && npm start` is the whole of it there too — `node-pty` ships `darwin-arm64`
+and `darwin-x64` prebuilds alongside the Windows ones, so there is still no toolchain to
+install. Tabs, the sidebar, scrollback, flow control, terminal naming and the usage bars
+all work. Three differences are worth knowing, and each one is a deliberate branch in the
+code rather than something that happens to work:
+
+- **Backups run `rsync` instead of `robocopy`.** Same job, same exclusions, same
+  destination layout — `rsync -a --delete` is what `robocopy /MIR` is, and both ship with
+  their OS. The two are described once each as `ROBOCOPY` and `RSYNC` in `backup.js` and
+  nothing else in the file knows which one it has. Their exit codes are not the same
+  table and are not read as though they were: 1 is an ordinary "files were copied" under
+  robocopy and a failure under rsync, and rsync's 24 — source files that vanished
+  mid-copy, i.e. an editor writing a temp file — is forgiven rather than reported red.
+  The one thing rsync cannot tell you is whether it had anything to do, so backups there
+  say "backed up" where Windows would sometimes say "already up to date".
+- **The usage bars read the keychain instead of a file.** Claude Code keeps the same
+  credentials JSON in the login keychain on macOS rather than in `~/.claude/.credentials.json`,
+  so `usage.js` falls back to `security find-generic-password -s "Claude Code-credentials" -w`
+  when the file is absent. The first read puts a system prompt up asking to allow access —
+  **Always Allow** answers it once and for good. Deny it, or have no item at all, and the
+  bars simply never appear; it waits ten minutes before asking again, so a refusal is
+  never a dialog every couple of minutes. The token is read in the main process and sent
+  only to Anthropic, exactly as on Windows.
+- **Terminals start as login shells.** An app launched from the Dock inherits launchd's
+  bare `PATH`, not a terminal's, so `shell.js` passes `-l` on macOS — otherwise the
+  profile that puts Homebrew, nvm and `claude` on `PATH` is never read and the first
+  thing every tab says is "command not found". Terminal.app does the same.
+
+There is also a menu bar there, which there is not on Windows. macOS routes ⌘Q, ⌘W and
+the clipboard through it, so an app with no menu cannot be quit from the keyboard or paste
+into its own text fields. Only those roles are in it — no reload, no dev tools, and no
+zoom, since ⌘= and ⌘- are the terminal font size and a menu accelerator would take them
+before the renderer saw them. ⌘⇧C/⌘⇧V and right-click copy and paste in the terminal, the
+same as on Windows.
+
+The two PowerShell scripts in `tools/` (`npm run shortcut`, `npm run exe`) are Windows
+taskbar plumbing and do nothing useful on a Mac. `npm run icon` is fine — run it once and
+the Dock picks up Hangar's icon instead of Electron's.
+
 ## What it touches on your machine
 
 Hangar spawns shells and copies folders, so several of the things it does look, out of
@@ -32,7 +73,9 @@ in `usage.js`, for the usage bars. Nothing else phones anywhere — `grep -rn "h
 renderer/*.js` is the whole audit. No telemetry, no update check, no analytics.
 
 **Your Claude credentials.** That request needs a token, and it reads the one Claude Code
-already keeps at `~/.claude/.credentials.json` (`readToken` in `usage.js`). It is read in
+already keeps at `~/.claude/.credentials.json` (`readToken` in `usage.js`) — or, on macOS
+where Claude Code stores it in the login keychain instead, by asking `security` for that
+one item (`readKeychainToken`, which spawns nothing on any other platform). It is read in
 the main process, fresh per poll, sent only to Anthropic in an `Authorization` header, and
 never handed to the renderer — the renderer receives two percentages and a reset time.
 Nothing is written back to that file. Delete `usage.js` and the feature simply hides
@@ -41,20 +84,22 @@ itself. If you have no credentials file, the bars never appear and no request is
 **Files it writes.** Three places, all of them yours, and only one of them off by default:
 
 - The backup folder you chose, if you turned backups on at all — a mirror of each project
-  (`backup.js`). It shells out to `robocopy /MIR`, which makes the destination match the
-  source and therefore **deletes files in the destination**. `prepare()` refuses any path
-  that is not a plain project name resolving inside the backup root, and the setup screen
-  refuses a backup folder that sits inside the projects folder, which between them keep
-  `/MIR` from being pointed at anything you care about. It only ever writes outward and
-  never reads the copy back.
+  (`backup.js`). It shells out to `robocopy /MIR`, or to `rsync -a --delete` off Windows,
+  which makes the destination match the source and therefore **deletes files in the
+  destination**. `prepare()` refuses any path that is not a plain project name resolving
+  inside the backup root, and the setup screen refuses a backup folder that sits inside
+  the projects folder, which between them keep the mirror from being pointed at anything
+  you care about. It only ever writes outward and never reads the copy back.
 - `%APPDATA%\hangar\config.json` — the two answers from the setup screen.
 - `%APPDATA%\hangar\window-state.json` — the window position, and nothing else.
+
+On macOS those last two are `~/Library/Application Support/Hangar/` instead.
 
 Creating a project makes an empty folder in the projects root. That is every write.
 
 **Processes it starts.** A pty per tab, running your shell or `claude` (`main.js`), plus
-`robocopy` for backups. Nothing runs at login, nothing installs a service, nothing runs
-elevated.
+`robocopy` or `rsync` for backups, and on macOS `security` to read the usage token.
+Nothing runs at login, nothing installs a service, nothing runs elevated.
 
 **The two PowerShell scripts are optional.** `npm run shortcut` and `npm run exe` in
 `tools/` do the most alarming-looking things in the repo — `make-exe.ps1` copies
@@ -243,13 +288,13 @@ is one: the copy happens at a quiet moment, and Dropbox then syncs a tree nothin
 writing to. Any other folder works the same — an external drive, a network share, a second
 disk. There is nothing Dropbox-specific in `backup.js`.
 
-The copy itself is `robocopy /MIR`, excluding `node_modules`, `.git`, build output and
-caches (`EXCLUDE_DIRS` in `backup.js`). The badge on the project row says where the copy
-stands — a green tick once it is safely up, blue arrows while it is not (turning while
-robocopy actually runs), a red mark if it failed. Hover it for the reason. Projects
+The copy itself is `robocopy /MIR` on Windows and `rsync -a --delete` elsewhere, excluding
+`node_modules`, `.git`, build output and caches (`EXCLUDE_DIRS` in `backup.js`). The badge
+on the project row says where the copy stands — a green tick once it is safely up, blue
+arrows while it is not (turning while the copy actually runs), a red mark if it failed. Hover it for the reason. Projects
 untouched this session carry no badge at all, and with backups off no row carries one.
 
-**This is a restore-from backup, not a sync.** It only ever writes outward, and `/MIR`
+**This is a restore-from backup, not a sync.** It only ever writes outward, and mirroring
 makes the destination match the source exactly — anything edited in the backup copy is gone
 on the next run, and anything sitting in it that is not in your projects folder gets
 deleted. Point it at a folder that holds nothing else; the setup screen refuses one inside
@@ -324,7 +369,7 @@ meta-return it has nothing to do with.
 | `shell.js` | Shell selection, argv building, project scanning — all pure, all tested |
 | `window-state.js` | Where the window was last time — pure geometry, tested |
 | `config.js` | The setup screen's answers — resolution order and path guards, tested |
-| `backup.js` | The project mirror — path guards and robocopy argv, tested |
+| `backup.js` | The project mirror — path guards, robocopy and rsync argv, tested |
 | `preload.js` | `contextBridge` surface — pty IPC plus Electron clipboard |
 | `renderer/classify.js` | Naming and stage detection — pure, tested, no DOM |
 | `renderer/renderer.js` | Sidebar, tabs, xterm instances, flow control, shortcuts |

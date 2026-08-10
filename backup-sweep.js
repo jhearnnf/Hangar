@@ -5,8 +5,8 @@
  *
  * Spawned detached on the way out, so quitting Hangar stays instant however
  * much there is left to copy. Sequential on purpose: every project is on the
- * same disk and headed for the same destination, so running fifteen robocopies
- * at once only makes them queue somewhere less visible.
+ * same disk and headed for the same destination, so running fifteen copies at
+ * once only makes them queue somewhere less visible.
  *
  * Takes project paths as arguments rather than finding them itself, so the
  * caller stays the only thing that decides what counts as a project. The

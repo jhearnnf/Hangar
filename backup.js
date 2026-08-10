@@ -10,9 +10,15 @@ const { spawn } = require('child_process');
  * nothing.
  *
  * Deliberately not a sync. The copy is only ever written to, never read back,
- * and exists to be restored from rather than worked in. Robocopy's /MIR makes
- * the destination match the source exactly, which means anything edited over
- * there is lost on the next run — fine for a backup, fatal for a working copy.
+ * and exists to be restored from rather than worked in. The mirror makes the
+ * destination match the source exactly, which means anything edited over there
+ * is lost on the next run — fine for a backup, fatal for a working copy.
+ *
+ * Two tools do that, one per platform: `robocopy /MIR` on Windows and
+ * `rsync -a --delete` everywhere else. Both ship with the OS, so neither is
+ * something to install. They differ in more than their flags — their exit codes
+ * mean different things — so each is described once in `COPIERS` below and the
+ * rest of this file only ever talks to the one this machine has.
  *
  * Dependencies are injectable so the argument building and the refusals can be
  * tested without touching a disk.
@@ -40,8 +46,9 @@ function backupRoot(env = process.env) {
 
 /**
  * Where a project's mirror goes, or null if the name is not one we are willing
- * to mirror onto. The destination is about to have /MIR pointed at it, so a
- * path that escapes the backup root would take whatever it landed on with it.
+ * to mirror onto. The destination is about to have a deleting mirror pointed at
+ * it, so a path that escapes the backup root would take whatever it landed on
+ * with it.
  */
 function destinationFor(projectPath, root) {
   const name = path.basename(projectPath);
@@ -52,38 +59,103 @@ function destinationFor(projectPath, root) {
   return dest;
 }
 
-function robocopyArgs(source, dest) {
-  return [
-    source, dest,
-    '/MIR',
-    '/XD', ...EXCLUDE_DIRS,
-    '/XF', ...EXCLUDE_FILES,
-    // Dropbox opens files in the destination to hash and upload them, and a
-    // file it has open cannot be replaced or deleted, so a mirror will now and
-    // then lose a race it would win a second later. Three retries two seconds
-    // apart rides that out while still giving up in under ten seconds, rather
-    // than robocopy's default of a million attempts a minute apart.
-    '/R:3', '/W:2',
-    '/MT:8',
-    // Silent: the exit code is the only part we read.
-    '/NFL', '/NDL', '/NJH', '/NJS', '/NP',
-  ];
-}
+const ROBOCOPY = {
+  file: 'robocopy',
+
+  args(source, dest) {
+    return [
+      source, dest,
+      '/MIR',
+      '/XD', ...EXCLUDE_DIRS,
+      '/XF', ...EXCLUDE_FILES,
+      // Dropbox opens files in the destination to hash and upload them, and a
+      // file it has open cannot be replaced or deleted, so a mirror will now and
+      // then lose a race it would win a second later. Three retries two seconds
+      // apart rides that out while still giving up in under ten seconds, rather
+      // than robocopy's default of a million attempts a minute apart.
+      '/R:3', '/W:2',
+      '/MT:8',
+      // Silent: the exit code is the only part we read.
+      '/NFL', '/NDL', '/NJH', '/NJS', '/NP',
+    ];
+  },
+
+  /**
+   * Robocopy answers with a bit field rather than the usual zero-or-not. Bits 0
+   * to 2 are ordinary outcomes — files were copied, the destination had extras,
+   * something mismatched — and only 8 and above mean a file failed to copy.
+   */
+  succeeded(code) {
+    return typeof code === 'number' && code >= 0 && code < 8;
+  },
+
+  describe(code) {
+    if (code === 0) return 'already up to date';
+    if (ROBOCOPY.succeeded(code)) return 'backed up';
+    if (code >= 16) return 'failed: robocopy hit a fatal error';
+    return 'failed: some files could not be copied';
+  },
+};
+
+const RSYNC = {
+  file: 'rsync',
+
+  args(source, dest) {
+    return [
+      '-a',        // the whole tree, with its permissions, times and symlinks
+      '--delete',  // what /MIR means: the destination is made to match, not merged
+      // One --exclude per name. rsync matches these at any depth, the way
+      // robocopy's /XD and /XF do with bare names, so the two mirrors leave out
+      // the same things. Files and directories share the flag here; rsync draws
+      // no distinction between them in a pattern.
+      ...[...EXCLUDE_DIRS, ...EXCLUDE_FILES].map((name) => `--exclude=${name}`),
+      // The trailing separator is the whole difference between filling the
+      // destination and creating a folder of the same name inside it, and with
+      // --delete in play the second one would empty the backup on every run.
+      trailingSlash(source),
+      dest,
+    ];
+  },
+
+  /**
+   * rsync uses ordinary exit codes, with one worth forgiving: 24 is "some
+   * source files vanished before I could copy them", which is what an editor
+   * writing a temp file mid-backup looks like and not a reason to call the run
+   * a failure. Everything the copy actually failed at is 23.
+   *
+   * There is no equivalent of robocopy's /R:3 /W:2 here, and none is wanted:
+   * that retry exists for Windows keeping an open file unreplaceable while
+   * Dropbox uploads it, which is not how open files work on the platforms
+   * rsync runs on. A file it genuinely could not read comes back as 23, and
+   * the renderer already retries a failed backup once.
+   */
+  succeeded(code) {
+    return code === 0 || code === 24;
+  },
+
+  describe(code) {
+    // rsync says nothing about whether it had anything to do, so unlike
+    // robocopy there is no "already up to date" to report.
+    if (RSYNC.succeeded(code)) return 'backed up';
+    if (code === 23) return 'failed: some files could not be copied';
+    return `failed: rsync exited ${code}`;
+  },
+};
 
 /**
- * Robocopy answers with a bit field rather than the usual zero-or-not. Bits 0
- * to 2 are ordinary outcomes — files were copied, the destination had extras,
- * something mismatched — and only 8 and above mean a file failed to copy.
+ * rsync's source argument, which has to end in a separator. See args() above.
+ *
+ * Always a forward slash, never `path.sep`: rsync only ever runs on the
+ * platforms where those are the same thing, and reading the separator off the
+ * host would put a backslash in here when the tests run on Windows.
  */
-function succeeded(code) {
-  return typeof code === 'number' && code >= 0 && code < 8;
+function trailingSlash(dir) {
+  return dir.endsWith('/') ? dir : `${dir}/`;
 }
 
-function describe(code) {
-  if (code === 0) return 'already up to date';
-  if (succeeded(code)) return 'backed up';
-  if (code >= 16) return 'failed: robocopy hit a fatal error';
-  return 'failed: some files could not be copied';
+/** The mirroring tool this machine has. Both ship with their OS. */
+function copier(platform = process.platform) {
+  return platform === 'win32' ? ROBOCOPY : RSYNC;
 }
 
 /**
@@ -104,7 +176,7 @@ function prepare(projectPath, { root = backupRoot(), exists = fs.existsSync, mkd
 
   if (!dest) return { error: 'refused: not a plain project name' };
 
-  // /MIR deletes everything the source does not have, so a source that has
+  // Mirroring deletes everything the source does not have, so a source that has
   // gone missing would quietly empty the backup instead of filling it.
   if (!exists(source)) return { error: 'refused: the project folder is missing' };
 
@@ -119,14 +191,16 @@ function prepare(projectPath, { root = backupRoot(), exists = fs.existsSync, mkd
 
 /** Mirror one project and resolve with how it went. */
 function mirror(projectPath, deps = {}) {
-  const { spawnFn = spawn } = deps;
+  const { spawnFn = spawn, platform = process.platform } = deps;
   const plan = prepare(projectPath, deps);
   if (plan.error) return Promise.resolve({ ok: false, message: plan.error });
+
+  const copy = copier(platform);
 
   return new Promise((resolve) => {
     let proc;
     try {
-      proc = spawnFn('robocopy', robocopyArgs(plan.source, plan.dest), {
+      proc = spawnFn(copy.file, copy.args(plan.source, plan.dest), {
         windowsHide: true,
         stdio: 'ignore',
       });
@@ -135,8 +209,19 @@ function mirror(projectPath, deps = {}) {
       return;
     }
 
-    proc.on('error', (err) => resolve({ ok: false, message: err.message }));
-    proc.on('close', (code) => resolve({ ok: succeeded(code), code, message: describe(code) }));
+    proc.on('error', (err) => resolve({
+      ok: false,
+      // The one failure worth naming rather than passing on raw: robocopy is
+      // always there on Windows, but a Linux box without rsync installed is an
+      // ordinary thing to be, and "spawn rsync ENOENT" does not say what to do
+      // about it.
+      message: err.code === 'ENOENT' ? `${copy.file} is not installed` : err.message,
+    }));
+    proc.on('close', (code) => resolve({
+      ok: copy.succeeded(code),
+      code,
+      message: copy.describe(code),
+    }));
   });
 }
 
@@ -174,9 +259,9 @@ function sweepDetached(projectPaths, { spawnFn = spawn, execPath = process.execP
 module.exports = {
   backupRoot,
   destinationFor,
-  robocopyArgs,
-  succeeded,
-  describe,
+  ROBOCOPY,
+  RSYNC,
+  copier,
   prepare,
   mirror,
   sweepDetached,

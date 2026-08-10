@@ -10,9 +10,20 @@ const PROJECT_IGNORE = new Set(['node_modules', 'dist', 'build', 'out', 'venv', 
  * Pick the best available shell. Order matters: PowerShell 7 if the user has
  * it, then Windows PowerShell, then cmd. On posix, honour $SHELL.
  *
+ * macOS gets `-l` as well, because an app launched from the Dock or Finder
+ * inherits launchd's bare PATH rather than a terminal's. Without a login shell
+ * the profile that puts Homebrew, nvm and `claude` on PATH is never read, and
+ * the first thing every tab would say is "command not found". Terminal.app runs
+ * login shells for the same reason. zsh is the default there, so it is the
+ * fallback when $SHELL is somehow unset.
+ *
  * Dependencies are injectable so the choice can be tested for either platform.
  */
 function defaultShell({ platform = process.platform, env = process.env, exists = fs.existsSync } = {}) {
+  if (platform === 'darwin') {
+    return { file: env.SHELL || '/bin/zsh', args: ['-l'] };
+  }
+
   if (platform !== 'win32') {
     return { file: env.SHELL || '/bin/bash', args: [] };
   }
@@ -40,7 +51,12 @@ function argsFor(shell, command) {
 
   if (/pwsh|powershell/i.test(shell.file)) return [...args, '-NoExit', '-Command', command];
   if (/cmd\.exe/i.test(shell.file)) return [...args, '/K', command];
-  return [...args, '-i', '-c', `${command}; exec "${shell.file}" -i`];
+
+  // The shell left behind after the command exits is started with the same
+  // flags as the one running it, so `-l` on macOS is not quietly dropped
+  // halfway through the tab's life.
+  const rest = [...args, '-i'].join(' ');
+  return [...args, '-i', '-c', `${command}; exec "${shell.file}" ${rest}`];
 }
 
 /**

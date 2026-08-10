@@ -7,14 +7,19 @@ const require = createRequire(import.meta.url);
 const {
   backupRoot,
   destinationFor,
-  robocopyArgs,
-  succeeded,
-  describe: describeCode,
+  ROBOCOPY,
+  RSYNC,
+  copier,
   prepare,
   mirror,
   sweepDetached,
   EXCLUDE_DIRS,
+  EXCLUDE_FILES,
 } = require('../backup.js');
+
+const robocopyArgs = ROBOCOPY.args;
+const succeeded = ROBOCOPY.succeeded;
+const describeCode = ROBOCOPY.describe;
 
 const ROOT = path.resolve('D:/Backups/Hangar');
 
@@ -29,7 +34,17 @@ function fakeSpawn(code, calls = []) {
   };
 }
 
-const okDeps = { root: ROOT, exists: () => true, mkdir: () => {} };
+// The platform is stated rather than inherited, so which tool a test is about
+// is part of the test rather than a property of the machine running it.
+const okDeps = { root: ROOT, exists: () => true, mkdir: () => {}, platform: 'win32' };
+
+describe('copier', () => {
+  it('uses robocopy on Windows and rsync everywhere else', () => {
+    expect(copier('win32')).toBe(ROBOCOPY);
+    expect(copier('darwin')).toBe(RSYNC);
+    expect(copier('linux')).toBe(RSYNC);
+  });
+});
 
 describe('backupRoot', () => {
   it('falls back to a folder in home when nothing is configured', () => {
@@ -98,6 +113,63 @@ describe('robocopyArgs', () => {
   });
 });
 
+describe('RSYNC.args', () => {
+  const args = RSYNC.args('/Users/you/src/Widget', '/Users/you/Dropbox/bak/Widget');
+
+  it('mirrors rather than merges', () => {
+    expect(args).toContain('-a');
+    expect(args).toContain('--delete');
+  });
+
+  it('ends the source in a slash and leaves the destination without one', () => {
+    // The single most dangerous character in this file. Without it rsync
+    // creates bak/Widget/Widget and --delete empties the level above it.
+    expect(args[args.length - 2]).toBe('/Users/you/src/Widget/');
+    expect(args[args.length - 1]).toBe('/Users/you/Dropbox/bak/Widget');
+  });
+
+  it('does not double the slash on a source that already has one', () => {
+    const already = RSYNC.args('/Users/you/src/Widget/', '/bak/Widget');
+    expect(already[already.length - 2]).toBe('/Users/you/src/Widget/');
+  });
+
+  it('leaves out everything the Windows mirror leaves out', () => {
+    // Both mirrors have to skip the same things, or the same project backed up
+    // from two machines would be two different trees.
+    for (const name of [...EXCLUDE_DIRS, ...EXCLUDE_FILES]) {
+      expect(args).toContain(`--exclude=${name}`);
+    }
+  });
+
+  it('says nothing on stdout, since only the exit code is read', () => {
+    expect(args).not.toContain('-v');
+    expect(args).not.toContain('--progress');
+  });
+});
+
+describe('RSYNC exit codes', () => {
+  it('treats a clean run as success', () => {
+    expect(RSYNC.succeeded(0)).toBe(true);
+    expect(RSYNC.describe(0)).toMatch(/backed up/);
+  });
+
+  it('forgives files that vanished mid-copy', () => {
+    // 24 is an editor writing a temp file while the backup walks past it, not
+    // a backup worth flagging red in the sidebar.
+    expect(RSYNC.succeeded(24)).toBe(true);
+  });
+
+  it('treats a partial transfer as a failure', () => {
+    expect(RSYNC.succeeded(23)).toBe(false);
+    expect(RSYNC.describe(23)).toMatch(/^failed/);
+  });
+
+  it('names any other code rather than swallowing it', () => {
+    expect(RSYNC.succeeded(1)).toBe(false);
+    expect(RSYNC.describe(12)).toMatch(/12/);
+  });
+});
+
 describe('succeeded', () => {
   it('treats robocopy bits 0-2 as ordinary outcomes', () => {
     for (const code of [0, 1, 2, 3, 4, 5, 6, 7]) expect(succeeded(code)).toBe(true);
@@ -128,7 +200,7 @@ describe('describe', () => {
 describe('prepare', () => {
   it('refuses when the project folder is missing', () => {
     // /MIR against a vanished source would empty the backup rather than fill it.
-    const plan = prepare('C:/src/Gone', { root: ROOT, exists: () => false, mkdir: () => {} });
+    const plan = prepare('C:/src/Gone', { ...okDeps, exists: () => false });
     expect(plan.error).toMatch(/missing/);
   });
 
@@ -142,8 +214,7 @@ describe('prepare', () => {
 
   it('reports a backup folder it cannot create', () => {
     const plan = prepare('C:/src/Widget', {
-      root: ROOT,
-      exists: () => true,
+      ...okDeps,
       mkdir: () => { throw new Error('EACCES'); },
     });
     expect(plan.error).toMatch(/EACCES/);
@@ -154,6 +225,7 @@ describe('prepare', () => {
     expect(plan.error).toBeUndefined();
     expect(plan.dest).toBe(path.join(ROOT, 'Widget'));
   });
+
 });
 
 describe('mirror', () => {
@@ -171,9 +243,8 @@ describe('mirror', () => {
   it('never spawns anything when the source is missing', async () => {
     const calls = [];
     const result = await mirror('C:/src/Gone', {
-      root: ROOT,
+      ...okDeps,
       exists: () => false,
-      mkdir: () => {},
       spawnFn: fakeSpawn(0, calls),
     });
     expect(result.ok).toBe(false);
@@ -196,12 +267,56 @@ describe('mirror', () => {
     await mirror('C:/src/Widget', { ...okDeps, spawnFn: fakeSpawn(0, calls) });
     expect(calls[0].opts.windowsHide).toBe(true);
   });
+
+  it('runs rsync off Windows, with the source it was given', async () => {
+    const calls = [];
+    const result = await mirror('/Users/you/src/Widget', {
+      ...okDeps, platform: 'darwin', root: '/Users/you/bak', spawnFn: fakeSpawn(0, calls),
+    });
+
+    const args = calls[0].args;
+    expect(calls[0].file).toBe('rsync');
+    expect(args).toContain('--delete');
+    // prepare() resolves through the host's path module, so running this on
+    // Windows puts a drive letter on the front. What matters here is that the
+    // source still arrives with its trailing slash.
+    expect(args[args.length - 2]).toBe(`${path.resolve('/Users/you/src/Widget')}/`);
+    expect(result.ok).toBe(true);
+  });
+
+  it('reads rsync exit codes as rsync codes, not robocopy ones', async () => {
+    // 1 is a success under robocopy's bit field and a failure under rsync, so
+    // this is the one case where reading the wrong table looks fine and isn't.
+    const rsync = await mirror('/Users/you/src/Widget', {
+      ...okDeps, platform: 'darwin', root: '/Users/you/bak', spawnFn: fakeSpawn(1),
+    });
+    expect(rsync.ok).toBe(false);
+
+    const robocopy = await mirror('C:/src/Widget', { ...okDeps, spawnFn: fakeSpawn(1) });
+    expect(robocopy.ok).toBe(true);
+  });
+
+  it('says so plainly when rsync is not installed', async () => {
+    const spawnFn = () => {
+      const proc = new EventEmitter();
+      const err = new Error('spawn rsync ENOENT');
+      err.code = 'ENOENT';
+      queueMicrotask(() => proc.emit('error', err));
+      return proc;
+    };
+    const result = await mirror('/Users/you/src/Widget', {
+      ...okDeps, platform: 'darwin', root: '/Users/you/bak', spawnFn,
+    });
+    expect(result.message).toBe('rsync is not installed');
+  });
 });
 
 describe('sweepDetached', () => {
   const run = (paths) => {
     const calls = [];
-    const ok = sweepDetached(paths, { spawnFn: fakeSpawn(0, calls), execPath: 'C:\\el\\electron.exe' });
+    const ok = sweepDetached(paths, {
+      spawnFn: fakeSpawn(0, calls), execPath: 'C:\\el\\electron.exe', platform: 'win32',
+    });
     return { ok, call: calls[0], calls };
   };
 
@@ -227,6 +342,7 @@ describe('sweepDetached', () => {
       spawnFn: fakeSpawn(0, calls),
       execPath: 'C:\\el\\electron.exe',
       root: 'D:\\chosen',
+      platform: 'win32',
     });
     expect(calls[0].opts.env.HANGAR_BACKUP_ROOT).toBe('D:\\chosen');
   });

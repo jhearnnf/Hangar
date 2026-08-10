@@ -105,6 +105,38 @@ function saveStateSoon() {
   saveTimer = setTimeout(saveState, 400);
 }
 
+/**
+ * The menu bar, which on every platform but macOS is no menu bar at all — the
+ * app is one big terminal and its shortcuts live in the renderer.
+ *
+ * macOS is the exception because the menu is not only a menu there. The system
+ * routes Cmd+Q, Cmd+W and the clipboard through it, so an app without one
+ * cannot be quit with the keyboard and cannot paste into its own text fields.
+ * Only the roles that buy those back are here: no reload, no dev tools, and in
+ * particular no zoom roles, since Cmd+= and Cmd+- are the terminal font size
+ * and a menu accelerator would take them before the renderer ever saw them.
+ */
+function applicationMenu() {
+  if (process.platform !== 'darwin') return null;
+
+  return Menu.buildFromTemplate([
+    { role: 'appMenu' },
+    {
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' }, { role: 'redo' }, { type: 'separator' },
+        { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' },
+      ],
+    },
+    {
+      label: 'Window',
+      submenu: [
+        { role: 'minimize' }, { role: 'togglefullscreen' }, { type: 'separator' }, { role: 'close' },
+      ],
+    },
+  ]);
+}
+
 function createWindow() {
   const state = restoreState(loadState(), screen.getAllDisplays().map((d) => d.workArea));
 
@@ -127,7 +159,7 @@ function createWindow() {
     },
   });
 
-  Menu.setApplicationMenu(null);
+  Menu.setApplicationMenu(applicationMenu());
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 
   if (process.env.HANGAR_DEBUG) {
@@ -171,9 +203,26 @@ function createWindow() {
 // "Electron" entry that pins as electron.exe.
 app.setAppUserModelId('com.jameshangar.hangar');
 
+// macOS puts the app name in the menu bar and in the About item, and takes it
+// from package.json otherwise — a lower-case "hangar". Only set there, because
+// the name is also what userData is named after: renaming it on Windows would
+// orphan the config.json that is already sitting in %APPDATA%\hangar.
+if (process.platform === 'darwin') app.setName('Hangar');
+
 // Settings first: the window's very first IPC call asks for them, and the
 // projects root decides what the sidebar is a listing of.
 app.whenReady().then(() => {
+  // The window's `icon:` is ignored on macOS, and the .ico beside it is not a
+  // format the Dock reads, so the Dock is set from a png here or it shows
+  // Electron's own icon. The pngs are rasterised by `npm run icon` rather than
+  // committed, so a clone that has not run it simply keeps the stock icon.
+  if (process.platform === 'darwin' && app.dock) {
+    const dockIcon = path.join(__dirname, 'assets', 'icon-256.png');
+    try {
+      if (fs.existsSync(dockIcon)) app.dock.setIcon(dockIcon);
+    } catch { /* cosmetic, never worth failing a launch over */ }
+  }
+
   applyConfig(loadConfig());
   createWindow();
 });
@@ -232,8 +281,8 @@ ipcMain.handle('projects:create', (_event, { name }) => {
 
 // ------------------------------------------------------------------- backups
 
-// Refused here rather than only in the renderer: this is the side that runs
-// robocopy, and backups being off has to mean nothing copies whatever asked.
+// Refused here rather than only in the renderer: this is the side that runs the
+// copy, and backups being off has to mean nothing copies whatever asked.
 ipcMain.handle('backup:run', (_event, { projectPath }) => {
   if (!config.backupEnabled) return { ok: false, message: 'backups are turned off' };
   return mirror(projectPath, { root: config.backupRoot });

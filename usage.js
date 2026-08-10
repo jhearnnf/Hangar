@@ -3,6 +3,7 @@
 const os = require('os');
 const path = require('path');
 const fs = require('fs');
+const { execFile } = require('child_process');
 
 /**
  * The 5-hour and weekly usage bars, read from the same endpoint Claude Code's
@@ -18,8 +19,12 @@ const fs = require('fs');
  * Code release is allowed to break this feature, but not to break Hangar.
  *
  * The token is not ours to manage. Claude Code writes and rotates it; we only
- * ever read the file, fresh on every poll, and never pass it anywhere the
- * renderer can reach.
+ * ever read it, fresh on every poll, and never pass it anywhere the renderer
+ * can reach.
+ *
+ * Where it lives depends on the machine. On Windows and Linux it is a file. On
+ * macOS Claude Code puts the same JSON in the login keychain instead, so there
+ * the file is usually absent and `security` is asked for it.
  */
 
 const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
@@ -35,27 +40,79 @@ const MIN_INTERVAL_MS = 120_000;
 // A poll nobody is waiting on should never be able to hang around forever.
 const TIMEOUT_MS = 10_000;
 
+// The keychain item Claude Code writes on macOS. Its name is Claude Code's, not
+// ours, and the value under it is byte for byte what `.credentials.json` holds
+// on the other platforms.
+const KEYCHAIN_SERVICE = 'Claude Code-credentials';
+
+// The first read of that item from a binary that has not been granted access
+// puts a system prompt in front of the user. `security` sits there until it is
+// answered, so this runs asynchronously and gives up rather than leaving a
+// child of ours parked on a dialog nobody is looking at.
+const KEYCHAIN_TIMEOUT_MS = 20_000;
+
+// How long to leave the keychain alone after it declines to answer. Without
+// this a machine that has no item — or a user who clicked Deny — would be asked
+// again every couple of minutes, and each ask can be another dialog.
+const KEYCHAIN_RETRY_MS = 600_000;
+
 function credentialsPath(env = process.env) {
   return env.HANGAR_CLAUDE_CREDENTIALS
     || path.join(os.homedir(), '.claude', '.credentials.json');
 }
 
+/** The access token out of the credentials JSON, or null if it is not in there. */
+function tokenFrom(raw) {
+  try {
+    const parsed = JSON.parse(raw);
+    const token = parsed && parsed.claudeAiOauth && parsed.claudeAiOauth.accessToken;
+    return typeof token === 'string' && token ? token : null;
+  } catch {
+    return null; // not JSON at all
+  }
+}
+
 /**
- * The current OAuth access token, or null if this machine has none.
+ * The current OAuth access token from the credentials file, or null if this
+ * machine has none.
  *
  * Null is an ordinary answer rather than a failure: API-key, Bedrock and Vertex
- * users have no credentials file at all, and neither does a machine where
- * Claude Code has never been signed in.
+ * users have no credentials file at all, a machine where Claude Code has never
+ * been signed in has none either, and on macOS there is normally no file to
+ * read because the same JSON is in the keychain instead.
  */
 function readToken(deps = {}) {
   const { readFile = fs.readFileSync, env = process.env } = deps;
   try {
-    const raw = JSON.parse(readFile(credentialsPath(env), 'utf8'));
-    const token = raw && raw.claudeAiOauth && raw.claudeAiOauth.accessToken;
-    return typeof token === 'string' && token ? token : null;
+    return tokenFrom(readFile(credentialsPath(env), 'utf8'));
   } catch {
-    return null; // missing, unreadable, or not JSON — all mean "no bar"
+    return null; // missing or unreadable — same answer as "no bar"
   }
+}
+
+/**
+ * The same token out of the macOS login keychain, or null.
+ *
+ * Only macOS keeps it there, so everywhere else this answers null without
+ * spawning anything. Every failure — no item, no `security`, a refused prompt,
+ * a timeout — is the same "no bar" as a missing file.
+ */
+function readKeychainToken(deps = {}) {
+  const { execFileFn = execFile, platform = process.platform } = deps;
+  if (platform !== 'darwin') return Promise.resolve(null);
+
+  return new Promise((resolve) => {
+    try {
+      execFileFn(
+        'security',
+        ['find-generic-password', '-s', KEYCHAIN_SERVICE, '-w'],
+        { timeout: KEYCHAIN_TIMEOUT_MS },
+        (err, stdout) => resolve(err ? null : tokenFrom(String(stdout).trim())),
+      );
+    } catch {
+      resolve(null);
+    }
+  });
 }
 
 /** A utilisation figure as 0-100, or null if it is not a usable number. */
@@ -161,6 +218,22 @@ function createUsageReader(deps = {}) {
   let cached = null;   // last good { fiveHour, sevenDay }
   let cachedAt = 0;
   let inflight = null;
+  let keychainAfter = 0;   // don't ask macOS again before this
+
+  /**
+   * The token, from wherever this machine keeps it. The file is tried first
+   * everywhere, because it costs a `readFileSync` and answers on the platforms
+   * that use it; the keychain is the macOS fallback behind it.
+   */
+  async function currentToken() {
+    const fromFile = readToken(deps);
+    if (fromFile) return fromFile;
+
+    if (now() < keychainAfter) return null;
+    const fromKeychain = await readKeychainToken(deps);
+    if (!fromKeychain) keychainAfter = now() + KEYCHAIN_RETRY_MS;
+    return fromKeychain;
+  }
 
   function answer(extra = {}) {
     if (!cached) return { available: false, ...extra };
@@ -175,17 +248,17 @@ function createUsageReader(deps = {}) {
   }
 
   async function poll() {
-    const token = readToken(deps);
+    const token = await currentToken();
     if (!token) return answer({ reason: 'no credentials' });
 
     let res = await requestUsage(token, deps);
 
     // A rotated token is the one auth failure worth a second attempt: Claude
-    // Code may have rewritten the file between our read and the request. Only
-    // retried when the file genuinely changed, so an expired login costs one
-    // request rather than two.
+    // Code may have rewritten it between our read and the request. Only retried
+    // when it genuinely changed, so an expired login costs one request rather
+    // than two.
     if (!res.ok && res.reason === 'auth') {
-      const fresh = readToken(deps);
+      const fresh = await currentToken();
       if (fresh && fresh !== token) res = await requestUsage(fresh, deps);
     }
 
@@ -216,8 +289,12 @@ function createUsageReader(deps = {}) {
 module.exports = {
   USAGE_URL,
   MIN_INTERVAL_MS,
+  KEYCHAIN_SERVICE,
+  KEYCHAIN_RETRY_MS,
   credentialsPath,
+  tokenFrom,
   readToken,
+  readKeychainToken,
   percent,
   parseWindow,
   parseUsage,

@@ -285,7 +285,7 @@ async function runBackup(projectPath) {
   if (backupState.get(projectPath) === 'running') return;
 
   setBackupState(projectPath, 'running');
-  // Cleared up front: anything written while robocopy runs should re-arm the
+  // Cleared up front: anything written while the copy runs should re-arm the
   // countdown rather than be counted as covered by this pass.
   backupDirty.delete(projectPath);
 
@@ -322,8 +322,8 @@ async function runBackup(projectPath) {
  * The per-project trigger only fires for projects worked on inside Hangar,
  * which would leave anything edited in Cursor unprotected until the next time
  * a terminal happened to open there. Sweeping at launch closes that gap, and
- * costs almost nothing after the first run: robocopy walks a directory it has
- * already mirrored in milliseconds and copies only what moved.
+ * costs almost nothing after the first run: a mirror walks a directory it has
+ * already copied in milliseconds and moves only what changed.
  *
  * One at a time, and skipping anything mid-task, so it cannot compete with
  * work that has already started.
@@ -640,7 +640,10 @@ async function createTab(project, command) {
 
   const term = new Terminal({
     scrollback: 100_000,
-    fontFamily: '"Cascadia Mono", "Cascadia Code", Consolas, "Courier New", monospace',
+    // Windows first, then the macOS pair. None of the mac names exist on
+    // Windows and none of the Windows ones exist on macOS, so each platform
+    // falls through to its own without either having to be asked about.
+    fontFamily: '"Cascadia Mono", "Cascadia Code", Consolas, "SF Mono", Menlo, "Courier New", monospace',
     fontSize,
     lineHeight: 1.2,
     cursorBlink: true,

@@ -130,10 +130,11 @@ function resolveConfig(saved, { env = process.env, defaults = DEFAULTS } = {}) {
  * backup folder does not, since it is about to be created; it only has to be an
  * absolute path that is not inside the projects folder.
  */
-function validateFolder(value, { mustExist = false, exists = fs.existsSync } = {}) {
+function validateFolder(value, { mustExist = false, exists = fs.existsSync, platform = process.platform } = {}) {
+  const example = platform === 'win32' ? 'C:\\Users\\you\\Projects' : '/Users/you/Projects';
   const trimmed = (value || '').trim();
   if (!trimmed) return { ok: false, message: 'Pick a folder.' };
-  if (!path.isAbsolute(trimmed)) return { ok: false, message: 'Needs to be a full path, like C:\\Users\\you\\Projects.' };
+  if (!path.isAbsolute(trimmed)) return { ok: false, message: `Needs to be a full path, like ${example}.` };
   if (mustExist && !exists(trimmed)) return { ok: false, message: 'There is no folder at that path.' };
   return { ok: true, value: path.resolve(trimmed) };
 }

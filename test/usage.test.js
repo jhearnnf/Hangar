@@ -4,8 +4,11 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const {
   MIN_INTERVAL_MS,
+  KEYCHAIN_SERVICE,
+  KEYCHAIN_RETRY_MS,
   credentialsPath,
   readToken,
+  readKeychainToken,
   percent,
   parseWindow,
   parseUsage,
@@ -32,6 +35,17 @@ const LIVE_BODY = {
 function credentials(token) {
   return () => JSON.stringify({ claudeAiOauth: { accessToken: token, subscriptionType: 'pro' } });
 }
+
+/** A `security` that answers as told and records how it was called. */
+function fakeSecurity(reply, calls = []) {
+  return (file, args, opts, cb) => {
+    calls.push({ file, args, opts });
+    if (reply instanceof Error) cb(reply, '');
+    else cb(null, `${reply}\n`);   // the real one prints a trailing newline
+  };
+}
+
+const noFile = () => { throw new Error('ENOENT'); };
 
 /** A fetch that answers as told and records what it was asked. */
 function fakeFetch(replies, calls = []) {
@@ -76,6 +90,52 @@ describe('readToken', () => {
     // API-key, Bedrock and Vertex users land here.
     expect(readToken({ readFile: () => '{"other":true}', env: {} })).toBeNull();
     expect(readToken({ readFile: () => '{"claudeAiOauth":{}}', env: {} })).toBeNull();
+  });
+});
+
+describe('readKeychainToken', () => {
+  it('asks the login keychain for the item Claude Code writes on macOS', async () => {
+    const calls = [];
+    const token = await readKeychainToken({
+      platform: 'darwin',
+      execFileFn: fakeSecurity(JSON.stringify({ claudeAiOauth: { accessToken: 'sk-mac' } }), calls),
+    });
+
+    expect(token).toBe('sk-mac');
+    expect(calls[0].file).toBe('security');
+    expect(calls[0].args).toEqual(['find-generic-password', '-s', KEYCHAIN_SERVICE, '-w']);
+    // A prompt nobody answers must not leave a child of ours parked forever.
+    expect(calls[0].opts.timeout).toBeGreaterThan(0);
+  });
+
+  it('never spawns anything off macOS, where the token is a file', async () => {
+    const calls = [];
+    for (const platform of ['win32', 'linux']) {
+      expect(await readKeychainToken({ platform, execFileFn: fakeSecurity('{}', calls) })).toBeNull();
+    }
+    expect(calls).toEqual([]);
+  });
+
+  it('is null when there is no item, or the prompt was refused', async () => {
+    const denied = await readKeychainToken({
+      platform: 'darwin', execFileFn: fakeSecurity(new Error('SecKeychainSearchCopyNext: not found')),
+    });
+    expect(denied).toBeNull();
+  });
+
+  it('is null rather than throwing when the item is not the JSON we expect', async () => {
+    const token = await readKeychainToken({
+      platform: 'darwin', execFileFn: fakeSecurity('not json at all'),
+    });
+    expect(token).toBeNull();
+  });
+
+  it('is null when security is not on the machine at all', async () => {
+    const token = await readKeychainToken({
+      platform: 'darwin',
+      execFileFn: () => { throw new Error('ENOENT'); },
+    });
+    expect(token).toBeNull();
   });
 });
 
@@ -203,6 +263,9 @@ describe('createUsageReader', () => {
     readFile: credentials('sk-tok'),
     env: {},
     fetchFn: fakeFetch({ body: LIVE_BODY }),
+    // Stated so that running the suite on a mac cannot reach the real keychain
+    // and put a system prompt in front of whoever ran `npm test`.
+    platform: 'win32',
     ...over,
   });
 
@@ -239,9 +302,55 @@ describe('createUsageReader', () => {
   });
 
   it('is unavailable, not broken, when there are no credentials', async () => {
-    const noFile = () => { throw new Error('ENOENT'); };
     const res = await createUsageReader(base({ readFile: noFile })).get();
     expect(res).toEqual({ available: false, reason: 'no credentials' });
+  });
+
+  it('falls back to the keychain on macOS, where there is no file to read', async () => {
+    const calls = [];
+    const reader = createUsageReader(base({
+      readFile: noFile,
+      platform: 'darwin',
+      execFileFn: fakeSecurity(JSON.stringify({ claudeAiOauth: { accessToken: 'sk-mac' } })),
+      fetchFn: fakeFetch({ body: LIVE_BODY }, calls),
+    }));
+
+    const res = await reader.get();
+    expect(res.available).toBe(true);
+    expect(calls[0].opts.headers.Authorization).toBe('Bearer sk-mac');
+  });
+
+  it('leaves the keychain alone when the file already answered', async () => {
+    // The file is the cheap read and the only one that can put a dialog on
+    // screen if it goes wrong, so it has to be the one that short-circuits.
+    const asked = [];
+    await createUsageReader(base({
+      platform: 'darwin',
+      execFileFn: fakeSecurity('{}', asked),
+    })).get();
+    expect(asked).toEqual([]);
+  });
+
+  it('stops asking the keychain for a while once it has declined', async () => {
+    // Every ask is a possible system prompt, and one every two minutes for a
+    // machine that simply has no item would be its own bug.
+    const asked = [];
+    let clock = 1_000_000;
+    const reader = createUsageReader(base({
+      readFile: noFile,
+      platform: 'darwin',
+      execFileFn: fakeSecurity(new Error('not found'), asked),
+      now: () => clock,
+    }));
+
+    await reader.get();
+    clock += MIN_INTERVAL_MS + 1;
+    await reader.get();
+    expect(asked).toHaveLength(1);
+
+    clock += KEYCHAIN_RETRY_MS;
+    await reader.get();
+    expect(asked).toHaveLength(2);
   });
 
   it('polls at most once per interval however often it is asked', async () => {

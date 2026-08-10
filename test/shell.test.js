@@ -35,6 +35,17 @@ describe('defaultShell', () => {
     const shell = defaultShell({ platform: 'linux', env: { SHELL: '/usr/bin/zsh' } });
     expect(shell).toEqual({ file: '/usr/bin/zsh', args: [] });
   });
+
+  it('starts a login shell on macOS, where the Dock hands over a bare PATH', () => {
+    // Without -l the profile that puts Homebrew, nvm and claude on PATH is
+    // never read, and an app launched from Finder can't find any of them.
+    const shell = defaultShell({ platform: 'darwin', env: { SHELL: '/bin/zsh' } });
+    expect(shell).toEqual({ file: '/bin/zsh', args: ['-l'] });
+  });
+
+  it('falls back to zsh on macOS when $SHELL is unset', () => {
+    expect(defaultShell({ platform: 'darwin', env: {} }).file).toBe('/bin/zsh');
+  });
 });
 
 describe('argsFor', () => {
@@ -66,6 +77,15 @@ describe('argsFor', () => {
     expect(args[1]).toBe('-c');
     expect(args[2]).toContain('claude;');
     expect(args[2]).toContain('exec "/bin/bash" -i');
+  });
+
+  it('keeps the login flag on the shell it leaves behind', () => {
+    // A second shell without -l would be a prompt with a different PATH from
+    // the one the command just ran under.
+    const zsh = { file: '/bin/zsh', args: ['-l'] };
+    const args = argsFor(zsh, 'claude');
+    expect(args.slice(0, 3)).toEqual(['-l', '-i', '-c']);
+    expect(args[3]).toContain('exec "/bin/zsh" -l -i');
   });
 });
 
