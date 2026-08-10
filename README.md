@@ -49,6 +49,16 @@ code rather than something that happens to work:
   bare `PATH`, not a terminal's, so `shell.js` passes `-l` on macOS — otherwise the
   profile that puts Homebrew, nvm and `claude` on `PATH` is never read and the first
   thing every tab says is "command not found". Terminal.app does the same.
+- **`node-pty`'s spawn helper needs its executable bit back**, which the `postinstall` in
+  `package.json` does. Every pty on macOS is spawned through a small helper binary that
+  sets the controlling terminal — the shell is only `argv[2]` of it — and node-pty's npm
+  tarball records that helper as `0644`, so a fresh install has one that cannot be run.
+  Every failure inside that function comes back as the same bare string, `posix_spawnp
+  failed.`, naming neither the helper, nor the errno, nor the shell, so the symptom is an
+  app whose terminals simply do not open. The binary is fine — the arm64 one is ad-hoc
+  signed and runs the moment it is allowed to. `tools/fix-spawn-helper.js` is a chmod with
+  a long comment on it, and `main.js` checks the same bit when a spawn fails so a tree
+  that skipped scripts still says what is wrong rather than repeating node-pty's string.
 
 There is also a menu bar there, which there is not on Windows. macOS routes ⌘Q, ⌘W and
 the clipboard through it, so an app with no menu cannot be quit from the keyboard or paste
@@ -125,6 +135,12 @@ Creating a project makes an empty folder in the projects root. That is every wri
 **Processes it starts.** A pty per tab, running your shell or `claude` (`main.js`), plus
 `robocopy` or `rsync` for backups, and on macOS `security` to read the usage token.
 Nothing runs at login, nothing installs a service, nothing runs elevated.
+
+**The one thing that runs by itself.** `npm install` runs the `postinstall` in
+`package.json`, which is `tools/fix-spawn-helper.js` — on macOS only, it adds the
+executable bit to `node_modules/node-pty/prebuilds/*/spawn-helper`, which npm extracted
+without one and which nothing can open a terminal without. One `chmod` on one file inside
+`node_modules`, nothing outside it, and an immediate exit on every other platform.
 
 **The launcher scripts are optional.** `npm run shortcut` and `npm run exe` in `tools/` do
 the most alarming-looking things in the repo — `make-exe.ps1` copies `electron.exe` and
@@ -415,6 +431,7 @@ meta-return it has nothing to do with.
 | `renderer/style.css` | The whole UI, such as it is |
 | `assets/icon.svg` | Icon source — everything else in `assets/` is generated from it |
 | `tools/make-icon.js` | Rasterises the icon and packs the `.ico` |
+| `tools/fix-spawn-helper.js` | The `postinstall` chmod that makes ptys work on macOS |
 | `tools/make-exe.ps1` | Stamps the icon into a `Hangar.exe` copy of the Electron binary |
 | `tools/make-app.sh` | The same for the Dock — builds `Hangar.app` around this checkout |
 | `tools/install-shortcut.ps1` | Creates the shortcuts and repairs taskbar pins |

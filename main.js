@@ -381,7 +381,8 @@ ipcMain.handle('pty:create', (_event, { id, cwd, command, cols, rows }) => {
   try {
     proc = spawnPty(shell, args, { cols, rows, cwd: startDir });
   } catch (err) {
-    throw new Error(`${err.message}\n\n${shell.file} ${args.join(' ')}\nin ${startDir}`);
+    throw new Error(
+      `${err.message}${spawnHelperHint()}\n\n${shell.file} ${args.join(' ')}\nin ${startDir}`);
   }
 
   sessions.set(id, { proc, paused: false });
@@ -397,6 +398,35 @@ ipcMain.handle('pty:create', (_event, { id, cwd, command, cols, rows }) => {
 
   return { pid: proc.pid, shell: path.basename(shell.file), cwd: startDir };
 });
+
+/**
+ * The one thing "posix_spawnp failed." is nearly always about.
+ *
+ * node-pty spawns every macOS pty through a helper binary rather than the shell
+ * directly, and the npm tarball records that helper as 0644 — so a fresh
+ * install has one that cannot be executed, and every failure inside that
+ * function comes back as the same bare string with no errno and no path in it.
+ * tools/fix-spawn-helper.js puts the bit back at install time; this is for the
+ * tree where that did not run, since the message alone leads nowhere.
+ */
+function spawnHelperHint() {
+  if (process.platform !== 'darwin') return '';
+
+  try {
+    const root = path.dirname(path.dirname(require.resolve('node-pty')));
+    for (const helper of [
+      path.join(root, 'build', 'Release', 'spawn-helper'),
+      path.join(root, 'prebuilds', `${process.platform}-${process.arch}`, 'spawn-helper'),
+    ]) {
+      if (!fs.existsSync(helper)) continue;
+      if (fs.statSync(helper).mode & 0o111) return '';
+      return `\n\nnode-pty's spawn-helper is not executable, which is what fails:\n`
+        + `  chmod +x ${helper}`;
+    }
+  } catch { /* a guess that cannot be made is simply not offered */ }
+
+  return '';
+}
 
 function spawnPty(shell, args, { cols, rows, cwd }) {
   return pty.spawn(shell.file, args, {
