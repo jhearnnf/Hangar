@@ -468,6 +468,30 @@ function setTitle(tab, title) {
   paint(tab);
 }
 
+/**
+ * Say why a terminal is not one, in the pane that was going to be it.
+ *
+ * A shell that cannot be spawned, or that exits the moment it is, used to leave
+ * nothing at all behind — the sidebar was never redrawn, or the exit handler
+ * closed the tab again within milliseconds — so asking for a terminal looked
+ * exactly like asking for nothing. Whatever the shell or the spawn had to say
+ * about it is the one thing that can tell you what to fix, and this pane is the
+ * only place with room to print it.
+ */
+function reportFailure(tab, message) {
+  tab.failed = true;
+  tab.namedBySession = true;          // nothing is coming to name it now
+  setTitle(tab, 'failed');
+  setState(tab, 'ready');
+
+  tab.term.writeln('');
+  tab.term.writeln('\x1b[31mHangar could not start this terminal.\x1b[0m');
+  for (const line of String(message).split('\n')) tab.term.writeln(line);
+  tab.term.writeln('');
+  tab.term.writeln('\x1b[90mCtrl+Shift+W closes this tab.\x1b[0m');
+  paint(tab);
+}
+
 // ------------------------------------------------------- new project modal
 
 const modal = $('modal');
@@ -621,9 +645,17 @@ let idSeq = 0;
 
 async function newTerminal(project, command = DEFAULT_COMMAND) {
   expanded.add(project.path);
-  const tab = await createTab(project, command);
-  renderSidebar();
-  return tab;
+  // The sidebar is redrawn whatever happened. A throw on the way up used to
+  // skip it, which left the tab that had already been built listed nowhere and
+  // the double-click that asked for it looking like it had missed.
+  try {
+    return await createTab(project, command);
+  } catch (err) {
+    console.error('Hangar: could not open a terminal', err);
+    return null;
+  } finally {
+    renderSidebar();
+  }
 }
 
 async function createTab(project, command) {
@@ -728,7 +760,13 @@ async function createTab(project, command) {
   updateEmpty();
   fit.fit();
 
-  await api.create({ id, cwd: project.path, command, cols: term.cols, rows: term.rows });
+  try {
+    await api.create({ id, cwd: project.path, command, cols: term.cols, rows: term.rows });
+  } catch (err) {
+    reportFailure(tab, err && err.message ? err.message : String(err));
+    return tab;
+  }
+  tab.startedAt = Date.now();
 
   term.onData((data) => sendInput(tab, data));
   term.onResize(({ cols, rows }) => api.resize(id, cols, rows));
@@ -866,7 +904,23 @@ function noteOutput(tab, data) {
   }
 }
 
-api.onExit(({ id }) => closeTab(id));
+// Closing the tab is right for a shell you exited out of, and wrong for one
+// that never got as far as a prompt — a shell that isn't there, a login profile
+// that bailed, a `claude` that died on startup. Both arrive here as the same
+// event, and the only thing separating them is how long the session lasted:
+// nobody types `exit` inside a second and a half. So an instant death keeps its
+// tab and prints its exit code rather than disappearing, which is the same
+// thing as the click never having worked.
+const DEAD_ON_ARRIVAL_MS = 1500;
+
+api.onExit(({ id, exitCode }) => {
+  const tab = tabs.get(id);
+  if (tab && !tab.failed && Date.now() - tab.startedAt < DEAD_ON_ARRIVAL_MS) {
+    reportFailure(tab, `The shell exited immediately with code ${exitCode}.`);
+    return;
+  }
+  closeTab(id);
+});
 
 // -------------------------------------------------------------------- resizing
 

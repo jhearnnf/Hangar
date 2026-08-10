@@ -371,21 +371,18 @@ ipcMain.handle('pty:create', (_event, { id, cwd, command, cols, rows }) => {
   const shell = defaultShell();
   const startDir = cwd && fs.existsSync(cwd) ? cwd : os.homedir();
 
-  const proc = pty.spawn(shell.file, argsFor(shell, command), {
-    name: 'xterm-256color',
-    cols: cols || 80,
-    rows: rows || 24,
-    cwd: startDir,
-    env: childEnv(),
-    useConpty: process.platform === 'win32',
-    // The newer ConPTY bundled with node-pty rather than the one in Windows.
-    // The in-box one on Windows 10 swallows the alternate screen buffer, so a
-    // full-screen TUI like `claude` paints straight over the normal buffer and
-    // destroys the screenful of scrollback that was already there. Passing the
-    // alt screen through means the TUI gets its own buffer and everything
-    // printed before it comes back untouched when it exits.
-    useConptyDll: process.platform === 'win32',
-  });
+  const args = argsFor(shell, command);
+
+  // What is thrown here crosses to the renderer and ends up on the screen, and
+  // "spawn ENOENT" on its own is not something anyone can act on. The shell it
+  // tried, the arguments it tried them with and the directory it tried them in
+  // are the three things that actually name the problem.
+  let proc;
+  try {
+    proc = spawnPty(shell, args, { cols, rows, cwd: startDir });
+  } catch (err) {
+    throw new Error(`${err.message}\n\n${shell.file} ${args.join(' ')}\nin ${startDir}`);
+  }
 
   sessions.set(id, { proc, paused: false });
 
@@ -400,6 +397,24 @@ ipcMain.handle('pty:create', (_event, { id, cwd, command, cols, rows }) => {
 
   return { pid: proc.pid, shell: path.basename(shell.file), cwd: startDir };
 });
+
+function spawnPty(shell, args, { cols, rows, cwd }) {
+  return pty.spawn(shell.file, args, {
+    name: 'xterm-256color',
+    cols: cols || 80,
+    rows: rows || 24,
+    cwd,
+    env: childEnv(),
+    useConpty: process.platform === 'win32',
+    // The newer ConPTY bundled with node-pty rather than the one in Windows.
+    // The in-box one on Windows 10 swallows the alternate screen buffer, so a
+    // full-screen TUI like `claude` paints straight over the normal buffer and
+    // destroys the screenful of scrollback that was already there. Passing the
+    // alt screen through means the TUI gets its own buffer and everything
+    // printed before it comes back untouched when it exits.
+    useConptyDll: process.platform === 'win32',
+  });
+}
 
 ipcMain.on('pty:write', (_event, { id, data }) => {
   const s = sessions.get(id);

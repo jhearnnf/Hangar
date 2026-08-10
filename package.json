@@ -9,6 +9,7 @@
     "test": "vitest run",
     "icon": "electron tools/make-icon.js",
     "exe": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/make-exe.ps1",
+    "app": "sh tools/make-app.sh",
     "shortcut": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/install-shortcut.ps1"
   },
   "devDependencies": {

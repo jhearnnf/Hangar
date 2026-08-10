@@ -58,8 +58,33 @@ before the renderer saw them. ⌘⇧C/⌘⇧V and right-click copy and paste in 
 same as on Windows.
 
 The two PowerShell scripts in `tools/` (`npm run shortcut`, `npm run exe`) are Windows
-taskbar plumbing and do nothing useful on a Mac. `npm run icon` is fine — run it once and
-the Dock picks up Hangar's icon instead of Electron's.
+taskbar plumbing and do nothing useful on a Mac. The Dock is `npm run icon` followed by
+`npm run app`:
+
+```
+npm run icon        # rasterise assets/icon.svg — the .png files are not committed
+npm run app         # build Hangar.app from the Electron in node_modules
+```
+
+`npm run icon` alone gets you the icon on the Dock tile of a *running* Hangar, which is all
+`app.dock.setIcon` in `main.js` can reach. Everything else about the app — the icon before
+you click it, the one a Dock pin keeps, and the name in ⌘-tab — comes from the application
+bundle that was launched, and launching `electron .` means the bundle is Electron's. That
+is the same fact about Windows that `Hangar.exe` exists for, so `tools/make-app.sh` is the
+same answer: it copies `Electron.app`, renames the executable, sets the four `Info.plist`
+keys that name an app, drops in an `.icns`, and leaves a three-line pointer at this
+checkout in `Contents/Resources/app`, which is the first place Electron looks. `ditto`,
+`PlistBuddy`, `iconutil` and `codesign` all ship with macOS, so there is still nothing to
+install and still no build — the source here is what runs, and the bundle only launches it.
+
+The copy lands beside Electron in `node_modules`, where `npm install` will eventually wipe
+it; `npm run app -- /Applications` puts it somewhere that survives, still pointing back
+here. Either way, drag it to the Dock and pin that. Re-run it after an Electron upgrade so
+the runtime in the bundle matches the one `node-pty` was installed against.
+
+Re-signing at the end is not optional dressing: editing a bundle invalidates its signature,
+and Apple Silicon kills a binary whose signature does not check out without saying why.
+Ad-hoc (`codesign -s -`) is what Electron's own prebuilt dist carries.
 
 ## What it touches on your machine
 
@@ -101,12 +126,16 @@ Creating a project makes an empty folder in the projects root. That is every wri
 `robocopy` or `rsync` for backups, and on macOS `security` to read the usage token.
 Nothing runs at login, nothing installs a service, nothing runs elevated.
 
-**The two PowerShell scripts are optional.** `npm run shortcut` and `npm run exe` in
-`tools/` do the most alarming-looking things in the repo — `make-exe.ps1` copies
-`electron.exe` and rewrites the icon resources in the copy, and `install-shortcut.ps1`
-edits taskbar pin `.lnk` files and restarts Explorer. Both are cosmetic, both are ~200
-lines of commented PowerShell you can read end to end, and the app runs fine without ever
-invoking either. See *Why there is a Hangar.exe* below for why they exist.
+**The launcher scripts are optional.** `npm run shortcut` and `npm run exe` in `tools/` do
+the most alarming-looking things in the repo — `make-exe.ps1` copies `electron.exe` and
+rewrites the icon resources in the copy, and `install-shortcut.ps1` edits taskbar pin
+`.lnk` files and restarts Explorer. `npm run app` is the Mac's version of the same idea and
+looks much the same from outside: it copies `Electron.app`, edits the copy's `Info.plist`
+and re-signs it ad-hoc. All three are cosmetic, all three are commented scripts you can
+read end to end, and the app runs fine without ever invoking any of them. See *Why there is
+a Hangar.exe* below for why they exist. Each writes in exactly one place — beside Electron
+in `node_modules`, plus the Desktop and Start Menu for the Windows shortcut, and
+`/Applications` for the Mac bundle if you ask for it there.
 
 **Dependencies.** Seven, in `package.json`: `@xterm/*` (the terminal widget VS Code uses),
 `node-pty` (the pty binding Windows Terminal and VS Code use), and Electron itself. Pinned
@@ -208,6 +237,16 @@ folding away underneath it. Every project starts collapsed — terminals die wit
 so a project reopened expanded would only ever be an empty list. `Ctrl+Shift+E`
 hides the sidebar, and the top tab strip appears in its place — never both at once, since
 they would be listing the same terminals twice.
+
+A terminal that cannot start says so in the tab it would have been. A shell that fails to
+spawn, and one that exits within a second and a half of starting — a shell that isn't
+there, a login profile that bails, a `claude` that dies on startup — both used to leave
+nothing behind at all: the spawn error went nowhere and the exit closed the tab again
+within milliseconds, so opening a terminal was indistinguishable from clicking on nothing.
+Now the tab stays, carrying the shell that was tried, the arguments it was tried with, the
+directory it was tried in, and the exit code. `Ctrl+Shift+W` closes it. Exiting a shell
+you have actually been using still closes its tab, as it always did — nobody types `exit`
+inside a second and a half.
 
 ## New projects
 
@@ -377,6 +416,7 @@ meta-return it has nothing to do with.
 | `assets/icon.svg` | Icon source — everything else in `assets/` is generated from it |
 | `tools/make-icon.js` | Rasterises the icon and packs the `.ico` |
 | `tools/make-exe.ps1` | Stamps the icon into a `Hangar.exe` copy of the Electron binary |
+| `tools/make-app.sh` | The same for the Dock — builds `Hangar.app` around this checkout |
 | `tools/install-shortcut.ps1` | Creates the shortcuts and repairs taskbar pins |
 
 `npm test` runs the suite (vitest).

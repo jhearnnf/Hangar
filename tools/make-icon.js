@@ -19,7 +19,14 @@ const ASSETS = path.join(__dirname, '..', 'assets');
 const SVG = path.join(ASSETS, 'icon.svg');
 
 // Explorer, the taskbar, alt-tab and the shortcut all pick different sizes.
-const SIZES = [16, 24, 32, 48, 64, 128, 256];
+const ICO_SIZES = [16, 24, 32, 48, 64, 128, 256];
+
+// The Dock draws an icon far bigger than anything Windows asks for, and an
+// .icns is expected to carry a 512 and a 1024 for retina. Neither is any use in
+// an .ico — 256 is the largest entry that format has — so they are rendered
+// only on the platform that reads them, and only ICO_SIZES is ever packed.
+const MAC_SIZES = process.platform === 'darwin' ? [512, 1024] : [];
+const SIZES = [...ICO_SIZES, ...MAC_SIZES];
 
 // GPU compositing and offscreen capture disagree on some Windows drivers and
 // you get blank frames. Software rendering is plenty for seven small images.
@@ -29,7 +36,7 @@ app.disableHardwareAcceleration();
 // so the frame is fixed at the largest icon and every size is drawn into its
 // top-left corner and cropped out. That renders each size natively at its own
 // scale rather than downsampling one master, which keeps the small ones crisp.
-const FRAME = 256;
+const FRAME = Math.max(...SIZES);
 
 // One window, reused. Destroying an offscreen window and immediately opening
 // another makes the next load fail with ERR_FAILED.
@@ -140,7 +147,7 @@ app.whenReady().then(async () => {
       throw new Error(`expected ${size}x${size}, got ${actual.width}x${actual.height}`);
     }
     fs.writeFileSync(path.join(ASSETS, `icon-${size}.png`), png);
-    images.push({ size, png });
+    if (ICO_SIZES.includes(size)) images.push({ size, png });
     console.log(`icon-${size}.png  ${size}x${size}  ${png.length} bytes`);
   }
 
