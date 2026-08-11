@@ -269,7 +269,10 @@ input, textarea { -webkit-user-select: text; user-select: text; }
   background: var(--bg);
 }
 
-.term-pane { position: absolute; inset: 0; }
+/* The drag belongs to the terminal, which scrolls itself — see wireTouchScroll.
+   Without this the browser claims the gesture first and the terminal is handed
+   a stream of touchmoves it is too late to act on. */
+.term-pane { position: absolute; inset: 0; touch-action: none; }
 .term-pane[hidden] { display: none; }
 
 /* The keys the phone keyboard does not have. Scrolls sideways rather than

@@ -936,6 +936,16 @@ function rekey(tab, id) {
 }
 
 function sendInput(tab, data) {
+  // Typing into a terminal is the plainest statement there is that someone is
+  // sitting at this window, so it takes the width back from a phone that had
+  // reflowed this terminal to its own screen. Without this the only two ways
+  // back were activating a tab and the window regaining focus — and neither
+  // happens to a window that never lost focus in the first place, which is how
+  // a terminal ended up staying phone-shaped while being typed into.
+  //
+  // Guarded rather than measured on every keystroke: when the width is already
+  // this window's, which is nearly always, this costs one comparison.
+  if (tab.sizeOwner && tab.sizeOwner !== 'desktop') refit(tab, { force: true });
   api.write(tab.id, data);
 }
 
@@ -1133,6 +1143,14 @@ api.onExit(({ id, exitCode }) => {
 // -------------------------------------------------------------------- resizing
 
 new ResizeObserver(() => refit(tabs.get(activeId))).observe(panes);
+
+// Clicking into a terminal counts as sitting down at it too. Activating a tab
+// already takes the width back, but clicking inside the tab that is already
+// active is not activating anything.
+panes.addEventListener('pointerdown', () => {
+  const tab = tabs.get(activeId);
+  if (tab && tab.sizeOwner && tab.sizeOwner !== 'desktop') refit(tab, { force: true });
+});
 
 // -------------------------------------------------------------------- find bar
 

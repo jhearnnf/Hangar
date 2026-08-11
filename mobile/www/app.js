@@ -475,7 +475,43 @@ function onData({ id, data, reset }) {
   // scrolled out of its buffer. Anything already on screen is now the wrong
   // end of a gap, so it goes rather than being written onto.
   if (reset) view.term.reset();
-  view.term.write(data);
+  view.term.write(data, reset ? () => markOldWidth(view) : undefined);
+}
+
+/**
+ * Draw a line under history that was printed at a different width.
+ *
+ * What the PC sends back is the bytes it printed, not text: a program that drew
+ * a box eighty characters wide put that box's right-hand edge at column eighty,
+ * and there is no honest way to show that on a screen with fifty-seven columns.
+ * It wraps, and the wrapped-off ends collect down the right-hand side — a word
+ * fragment on the left, one stray character on the right, which reads as a
+ * broken app rather than as a picture that does not fit.
+ *
+ * Checked before assuming it could be fixed: replaying those bytes at the width
+ * they were printed at and re-laying them out afterwards gives the same result,
+ * character for character. Nothing was lost on the way — it genuinely does not
+ * fit.
+ *
+ * So the line says which it is. Everything below it was printed at this phone's
+ * width and is laid out properly; everything above was printed at the PC's, and
+ * the ⋮ menu will show it as it was.
+ */
+function markOldWidth(view) {
+  const printedAt = view.historyCols;
+  if (!printedAt || printedAt === view.term.cols) return;
+
+  // Only when there is something up there to scroll back to. A terminal opened
+  // from this phone a second ago has a prompt and nothing else, and its width
+  // can still differ by a column or two from what was asked for — a line
+  // announcing history above a screen with no history above it explains
+  // nothing.
+  view.historyCols = null;
+  if (view.term.buffer.active.baseY === 0) return;
+
+  const label = ` above: printed at the PC's ${printedAt} columns `;
+  const rule = '─'.repeat(Math.max(0, Math.floor((view.term.cols - label.length) / 2)));
+  view.term.write(`\r\n[2m${rule}${label}${rule}[0m\r\n`);
 }
 
 // ---------------------------------------------------------------- terminal
@@ -511,8 +547,122 @@ function makeView(session) {
   term.onData((data) => client.send({ t: 'input', id: session.id, data }));
 
   const view = { term, el };
+  wireTouchScroll(view);
   views.set(session.id, view);
   return view;
+}
+
+/**
+ * Scrolling with a finger.
+ *
+ * xterm does not do this. Its viewport answers a wheel and a scrollbar drag,
+ * and a phone has neither — a touch drag reaches it as nothing whatsoever,
+ * which is why the terminal sat at the bottom however hard it was pulled at.
+ * Measured rather than assumed: a simulated drag across 250px moved the
+ * viewport not one line, while a single wheel event over the same terminal
+ * moved it three.
+ *
+ * So the drag becomes scrolling here, a line for every line-height of travel,
+ * in whichever form the program in front of you understands.
+ */
+function wireTouchScroll(view) {
+  let last = 0;        // where the finger was last seen
+  let carry = 0;       // travel not yet worth a whole line
+  let dragging = false;
+
+  view.el.addEventListener('touchstart', (e) => {
+    dragging = e.touches.length === 1;
+    if (dragging) {
+      last = e.touches[0].clientY;
+      carry = 0;
+    }
+  }, { passive: true });
+
+  view.el.addEventListener('touchmove', (e) => {
+    if (!dragging || e.touches.length !== 1) return;
+
+    const y = e.touches[0].clientY;
+    carry += y - last;
+    last = y;
+
+    // Truncated toward zero so the two directions behave the same, and the
+    // remainder kept, so a slow drag still moves rather than rounding to
+    // nothing every frame.
+    const cell = cellSize(view).h;
+    const lines = Math.trunc(carry / cell);
+    if (!lines) return;
+    carry -= lines * cell;
+
+    e.preventDefault();
+    scrollByLines(view, -lines);   // a finger pulled downwards looks backwards
+  }, { passive: false });
+
+  const stop = () => { dragging = false; };
+  view.el.addEventListener('touchend', stop, { passive: true });
+  view.el.addEventListener('touchcancel', stop, { passive: true });
+}
+
+/**
+ * Move a terminal by whole lines, negative being back into what it printed
+ * earlier — for whichever of the two kinds of terminal this is.
+ *
+ * Ordinary output has real scrollback and the view moves through it. A
+ * full-screen program — claude, vim, top — has none: it painted over the whole
+ * screen and kept nothing behind it, so there is nothing to move through and
+ * the scroll has to be handed to the program instead. Which is what a wheel
+ * does on the desktop, and the rules here are the ones xterm itself uses for
+ * one: a mouse event if the program asked for the mouse, arrow keys if it did
+ * not.
+ */
+function scrollByLines(view, lines) {
+  const term = view.term;
+
+  if (term.buffer.active.type === 'normal') {
+    term.scrollLines(lines);
+    return;
+  }
+
+  // Capped: a flick that would send forty keystrokes into a program is not
+  // what anyone meant by it.
+  const count = Math.min(Math.abs(lines), 5);
+  const up = lines < 0;
+
+  if (term.modes.mouseTrackingMode !== 'none') {
+    // Encoded by xterm, because only it knows which of the four mouse
+    // encodings the program asked for, and what comes out arrives back through
+    // term.onData like anything else typed.
+    //
+    // Which is also why stdin is opened for the length of the call: while the
+    // compose box owns the keyboard xterm is told to accept nothing, and that
+    // gate swallows the report along with everything else. It is shut again
+    // before the call returns — the encoding is synchronous, and no keystroke
+    // can get through in between.
+    const core = term._core && term._core.coreMouseService;
+    const row = Math.max(0, Math.min(term.rows - 1, Math.floor(term.rows / 2)));
+    let reported = false;
+
+    if (core && typeof core.triggerMouseEvent === 'function') {
+      const shut = term.options.disableStdin;
+      term.options.disableStdin = false;
+      try {
+        for (let i = 0; i < count; i++) {
+          // Button 4 is the wheel; actions 0 and 1 are its two directions.
+          const ok = core.triggerMouseEvent({ col: 0, row, button: 4, action: up ? 0 : 1, ctrl: false, alt: false, shift: false });
+          reported = reported || ok;
+        }
+      } finally {
+        term.options.disableStdin = shut;
+      }
+    }
+
+    // A program can have the mouse switched on and still refuse a wheel, so a
+    // report that was turned down falls through to the keys below rather than
+    // to nothing at all.
+    if (reported) return;
+  }
+
+  const key = (term.modes.applicationCursorKeysMode ? 'O' : '[') + (up ? 'A' : 'B');
+  client.send({ t: 'input', id: openId, data: key.repeat(count) });
 }
 
 function openTerminal(id) {
@@ -525,6 +675,11 @@ function openTerminal(id) {
   let view = views.get(id);
   if (!view) {
     view = makeView(session);
+    // The width the PC is at right now, which is the width everything it is
+    // about to send back was printed at. Read before the claim below moves it,
+    // because after that the session says this phone's width and the bytes
+    // still say the PC's.
+    view.historyCols = session.cols;
     client.attach(id);
   }
 
@@ -574,6 +729,14 @@ function applyFit({ force = false } = {}) {
   const view = views.get(openId);
   const session = sessions.get(openId);
   if (!view || !session) return;
+
+  // Not while this phone is in a pocket. A dropped connection coming back puts
+  // the open terminal back on screen, and that used to claim the width — so a
+  // phone left with a terminal open would reach round from the next room and
+  // reflow a terminal someone at the PC was in the middle of using. Nothing
+  // here is worth doing for a screen nobody is looking at, and coming back to
+  // it fits again below.
+  if (document.hidden) return;
 
   const box = $('termhost');
   const width = box.clientWidth;
@@ -942,10 +1105,21 @@ if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App
 
   // Coming back from the lock screen is exactly when the socket has quietly
   // died and nothing has noticed yet.
-  App.addListener('appStateChange', ({ isActive }) => { if (isActive) client.wake(); });
+  App.addListener('appStateChange', ({ isActive }) => {
+    if (!isActive) return;
+    client.wake();
+    if (openId) fitTerminal({ force: true });
+  });
 }
 
-document.addEventListener('visibilitychange', () => { if (!document.hidden) client.wake(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  client.wake();
+  // Picking the phone back up is the moment to fit — and to take the width
+  // back, which the reconnect behind this deliberately no longer does on its
+  // own.
+  if (openId) fitTerminal({ force: true });
+});
 
 setInterval(() => { if (!$('projects').hidden) client.send({ t: 'usage' }); }, 60_000);
 
