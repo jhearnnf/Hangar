@@ -1,0 +1,21 @@
+{
+  "name": "hangar-mobile",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Hangar on a phone — a Capacitor shell around the mobile web client in www/.",
+  "scripts": {
+    "sync": "node tools/sync-www.js && cap sync android",
+    "android": "node tools/sync-www.js && cap sync android && cd android && gradlew.bat assembleDebug",
+    "run": "node tools/sync-www.js && cap run android",
+    "icon": "electron tools/make-icon.js"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.3.0",
+    "@capacitor/app": "^8.1.0",
+    "@capacitor/core": "^8.3.0",
+    "@capacitor/status-bar": "^8.0.2"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.3.0"
+  }
+}

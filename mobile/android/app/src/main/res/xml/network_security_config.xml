@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Hangar talks to one PC on your own wifi, over plain http and ws.
+
+  Android has refused cleartext by default since Android 9, and it is right to:
+  an app sending your data unencrypted over the internet is a real problem. This
+  is the other case — the packets never leave the house, there is no certificate
+  authority that can issue a certificate for 192.168.1.42, and the alternative
+  is a self-signed one that every phone would warn about forever.
+
+  What keeps it safe is not encryption but reach: the PC refuses connections
+  from anything that is not a local address, and refuses everything from a phone
+  that has not been paired with a one-use code typed at the keyboard.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

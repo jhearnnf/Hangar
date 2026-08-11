@@ -1,0 +1,973 @@
+'use strict';
+
+/* global createClient, Terminal, Unicode11Addon */
+
+/**
+ * Hangar, on a phone.
+ *
+ * The PC does everything. This is a viewer with a keyboard attached: it lists
+ * the projects and terminals the PC reports, draws whatever they print, and
+ * sends back what you type. Nothing here decides anything about a terminal —
+ * not its name, not its colour, not when it is finished — because the PC has
+ * already decided all of that for the window sitting in front of it, and two
+ * screens disagreeing about which terminal is which is worse than either being
+ * wrong on its own.
+ */
+
+const $ = (id) => document.getElementById(id);
+const store = {
+  get: (key, fallback = null) => {
+    try { return JSON.parse(localStorage.getItem('hangar.' + key)) ?? fallback; } catch { return fallback; }
+  },
+  set: (key, value) => { try { localStorage.setItem('hangar.' + key, JSON.stringify(value)); } catch { /* full */ } },
+  drop: (key) => { try { localStorage.removeItem('hangar.' + key); } catch { /* nothing to do */ } },
+};
+
+// `monospace` last and doing the real work: on Android it is whatever that
+// device ships as its fixed-width face, which is always a real one. The named
+// families ahead of it are a preference, not a requirement — a name that is not
+// installed is skipped, and the generic is what stops the list ever falling
+// through to a proportional font, which xterm would then lay out on a fixed
+// grid with the wide glyphs overlapping their neighbours.
+const FONT = 'ui-monospace, "Roboto Mono", "Droid Sans Mono", monospace';
+const LINE_HEIGHT = 1.15;
+
+// Below about this, glyph hinting on a phone runs the letters into each other
+// and the terminal turns to grey mush. Better to clip a too-wide grid at a size
+// that can be read than to fit all of it at a size that cannot.
+const MIN_FONT = 9;
+
+const THEME = {
+  background: '#12141a', foreground: '#c9d1d9', cursor: '#4d9cf6', cursorAccent: '#12141a',
+  selectionBackground: '#2d4b6e',
+  black: '#12141a', red: '#f47067', green: '#57ab5a', yellow: '#c69026', blue: '#539bf5',
+  magenta: '#b083f0', cyan: '#39c5cf', white: '#adbac7',
+  brightBlack: '#545d68', brightRed: '#ff938a', brightGreen: '#6bc46d', brightYellow: '#daaa3f',
+  brightBlue: '#6cb6ff', brightMagenta: '#dcbdfb', brightCyan: '#56d4dd', brightWhite: '#e6edf3',
+};
+
+// ------------------------------------------------------------------ state
+
+let projects = [];
+const sessions = new Map();   // id -> the PC's summary of it
+const views = new Map();      // id -> { term, el, seq }
+let openId = null;            // the terminal being looked at, if any
+let host = store.get('host', '');
+let port = store.get('port', 7433);
+let fontSize = store.get('fontSize', 12);
+let rawMode = store.get('rawMode', false);
+// On by default, which is the opposite of what it was and the opposite of what
+// seemed obvious. Mirroring the PC's exact layout sounds like the respectful
+// thing to do until you work out what it means: a 160-column terminal shrunk
+// into a phone is four-pixel text, which is not small — it is unreadable, the
+// letters run together, and it looks like the font is broken rather than like a
+// deliberate choice. A terminal reflowed to the width of the screen you are
+// actually holding is legible, and the ⋮ menu still has the other one.
+let claimSize = store.get('claimSize', true);
+let pcName = '';
+
+// Whether this phone has ever got as far as a welcome from this PC. It decides
+// whether a dropped connection is a note in the header or a trip back to the
+// form — the difference between "the wifi blinked" and "this has never worked".
+let everConnected = false;
+
+const client = createClient({
+  state: onState,
+  welcome: onWelcome,
+  paired: onPaired,
+  unpaired: onUnpaired,
+  unreachable: onUnreachable,
+  session: onSession,
+  data: onData,
+  exit: onExit,
+  created: onCreated,
+  projects: onProjects,
+  newProject: onNewProject,
+  usage: onUsage,
+  error: (m) => toast(m.message),
+});
+
+// ----------------------------------------------------------------- screens
+
+function show(name) {
+  for (const screen of document.querySelectorAll('.screen')) screen.hidden = screen.id !== name;
+  // The terminal is a screen over the top of the app rather than one of the
+  // three you can tab between, so the bar goes away under it.
+  $('nav').hidden = name === 'connect' || name === 'term';
+
+  for (const button of document.querySelectorAll('.nav-btn')) {
+    button.classList.toggle('on', button.dataset.screen === name);
+  }
+
+  if (name === 'projects') client.send({ t: 'usage' });
+  if (name === 'settings') paintSettings();
+}
+
+for (const button of document.querySelectorAll('.nav-btn')) {
+  button.addEventListener('click', () => show(button.dataset.screen));
+}
+
+let toastTimer = null;
+function toast(message) {
+  const box = $('toast');
+  box.textContent = message;
+  box.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { box.hidden = true; }, 3200);
+}
+
+// ----------------------------------------------------------------- connect
+
+function onState(state) {
+  const line = $('connectstate');
+  if (state === 'online') return;
+
+  if (state === 'connecting') line.textContent = `Connecting to ${host}…`;
+  else if (state === 'reconnecting') line.textContent = 'Lost the PC — trying again…';
+  else if (state === 'offline') line.textContent = `No answer from ${host}. Is Hangar running?`;
+
+  // A drop mid-session is not a reason to throw the user back to a form; the
+  // client is already trying, and the terminal they were reading is still on
+  // screen. Only say so.
+  if (!$('connect').hidden) return;
+  if (state === 'offline' || state === 'reconnecting') {
+    $('pchost').textContent = 'reconnecting…';
+    $('pchost').classList.add('warn');
+  }
+}
+
+function onWelcome(message) {
+  pcName = message.name || 'the PC';
+  everConnected = true;
+  store.set('host', host);
+  store.set('port', port);
+  store.set('token', client.token());
+
+  $('pchost').textContent = pcName;
+  $('pchost').classList.remove('warn');
+  $('connecterror').textContent = '';
+
+  projects = message.projects || [];
+  sessions.clear();
+  for (const session of message.sessions || []) sessions.set(session.id, session);
+
+  paintProjects();
+  paintTerminals();
+
+  // A terminal that was being read before the drop is still the one being
+  // read. Re-attaching happens in the client; this puts the pane back.
+  if (openId && sessions.has(openId)) openTerminal(openId);
+  else if ($('connect').hidden === false) show('projects');
+  else if (openId) { openId = null; show('projects'); }
+
+  client.send({ t: 'usage' });
+}
+
+function onPaired() {
+  store.set('token', client.token());
+  $('pairfield').hidden = true;
+  $('code').value = '';
+  toast('Paired with this PC.');
+}
+
+function onUnpaired(message) {
+  store.drop('token');
+  $('pairfield').hidden = false;
+  $('connecterror').textContent = message;
+  $('connectstate').textContent = 'This phone needs pairing.';
+  show('connect');
+}
+
+/**
+ * Say why nothing happened, in terms of what to go and do about it.
+ *
+ * "Connecting…" forever is the worst thing this screen can say, because every
+ * cause of it looks identical from here and none of them are on the phone. The
+ * two failures are told apart by how long the attempt took (see client.js) and
+ * they want opposite fixes, so they get opposite messages.
+ */
+function onUnreachable({ reason, host: where, port: onPort }) {
+  // Mid-session, this is a note in the header: the terminal being read is still
+  // on screen, the client is still trying, and throwing the whole app back to a
+  // form because the wifi blinked would be its own bug. Before the first
+  // connection there is nothing to protect, and the form is where the answer is.
+  if ($('connect').hidden && everConnected) {
+    $('pchost').textContent = 'no answer';
+    $('pchost').classList.add('warn');
+    return;
+  }
+  show('connect');
+
+  if (reason === 'refused') {
+    $('connectstate').textContent = `${where} answered, but nothing is listening on ${onPort}.`;
+    $('connecterror').textContent =
+      'Hangar is probably not running on that PC, or Settings → Phone is not ticked. '
+      + 'Check the port matches the one it shows.';
+    return;
+  }
+
+  $('connectstate').textContent = `No answer at all from ${where}.`;
+  $('connecterror').textContent =
+    'Something is dropping the connection rather than refusing it — nearly always Windows '
+    + 'Firewall on the PC, or a guest wifi network that keeps devices apart. On the PC, '
+    + 'check Settings → Phone: it says whether the network is one Windows is blocking. '
+    + 'Also check this phone is on the same wifi, not the guest one.';
+}
+
+async function connectNow() {
+  host = $('host').value.trim();
+  port = Number($('port').value) || 7433;
+  const code = $('code').value.trim().toUpperCase();
+  const token = store.get('token');
+
+  if (!host) {
+    $('connecterror').textContent = 'Type the address shown on the PC, or tap Find my PC.';
+    return;
+  }
+
+  // Without one of these the socket would open, sit there saying nothing, and
+  // be closed by the PC half a minute later — which reads exactly like a
+  // network that is not working, and is not one.
+  if (!token && !code) {
+    $('pairfield').hidden = false;
+    $('connecterror').textContent =
+      'This phone has not been paired yet. On the PC: Settings → Phone → Show a code, '
+      + 'then type those six characters here.';
+    $('code').focus();
+    return;
+  }
+
+  $('connecterror').textContent = '';
+  $('connectstate').textContent = `Connecting to ${host}…`;
+  client.connect({ host, port, token, code: code || null, name: deviceName() });
+}
+
+function deviceName() {
+  // Android does not hand a WebView the phone's name, and a made-up one is
+  // worse than none: the list on the PC has to be readable enough to know
+  // which phone to remove. The model out of the user agent is the closest
+  // thing to a name that is actually true.
+  const match = /Android[^;]*;\s*([^)]+?)(?:\s+Build|\))/.exec(navigator.userAgent);
+  return (match && match[1].trim()) || 'A phone';
+}
+
+$('connectgo').addEventListener('click', connectNow);
+$('code').addEventListener('keydown', (e) => { if (e.key === 'Enter') connectNow(); });
+$('host').addEventListener('keydown', (e) => { if (e.key === 'Enter') connectNow(); });
+
+/**
+ * Ask the network where Hangar is.
+ *
+ * A WebView cannot send a UDP broadcast, so this is the one thing on the phone
+ * that needs native code — a small plugin in the Android project that shouts
+ * and collects the answers. Where it is missing (a browser, an older build)
+ * the address field is still there and still works, so this is a convenience
+ * that fails into a form rather than a dead end.
+ */
+async function scan() {
+  const button = $('scan');
+  const plugin = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Discovery;
+
+  if (!plugin) {
+    $('connecterror').textContent =
+      'This build cannot search the network. Type the address the PC shows under Settings → Phone.';
+    return;
+  }
+
+  button.disabled = true;
+  $('connectstate').textContent = 'Listening for Hangar on this network…';
+  $('found').textContent = '';
+
+  let result;
+  try {
+    result = await plugin.find({ timeout: 2000 });
+  } catch (err) {
+    result = { hosts: [] };
+  }
+  button.disabled = false;
+
+  const hosts = (result && result.hosts) || [];
+  if (!hosts.length) {
+    $('connectstate').textContent = 'Nothing answered.';
+    $('connecterror').textContent =
+      'Either Hangar is not running with Settings → Phone ticked, or something is dropping '
+      + 'the question: Windows Firewall on the PC, or a guest wifi that keeps devices apart. '
+      + 'The PC shows its address under Settings → Phone — typing it in below works even when '
+      + 'searching does not.';
+    return;
+  }
+
+  $('connectstate').textContent = hosts.length === 1 ? 'Found it.' : 'Found these:';
+  for (const found of hosts) {
+    const row = document.createElement('button');
+    row.className = 'found-row';
+    row.innerHTML = '<span class="found-name"></span><span class="found-addr"></span>';
+    row.querySelector('.found-name').textContent = found.name || 'Hangar';
+    row.querySelector('.found-addr').textContent = `${found.address}:${found.port}`;
+    row.addEventListener('click', () => {
+      $('host').value = found.address;
+      $('port').value = found.port;
+      connectNow();
+    });
+    $('found').appendChild(row);
+  }
+}
+
+$('scan').addEventListener('click', scan);
+
+// ---------------------------------------------------------------- projects
+
+function onProjects(message) {
+  projects = message.projects || [];
+  paintProjects();
+}
+
+function terminalsIn(projectPath) {
+  return [...sessions.values()].filter((s) => s.projectPath === projectPath);
+}
+
+// Work moves through these in order, so a project wears the earliest stage any
+// terminal under it is in — the same rule the sidebar on the PC uses.
+const STAGES = ['planning', 'implementing', 'testing', 'ready'];
+
+function projectStage(projectPath) {
+  const states = terminalsIn(projectPath).map((s) => s.state);
+  return STAGES.find((s) => states.includes(s)) || null;
+}
+
+function paintProjects() {
+  const list = $('projectlist');
+  list.textContent = '';
+
+  for (const project of projects) {
+    const mine = terminalsIn(project.path);
+
+    const row = document.createElement('div');
+    row.className = 'row project-row' + (projectStage(project.path) ? ' state-' + projectStage(project.path) : '');
+    row.innerHTML = '<span class="dot"></span><span class="row-name"></span>'
+      + '<span class="row-count"></span><button class="row-add" aria-label="New terminal">+</button>';
+    row.querySelector('.row-name').textContent = project.name;
+    row.querySelector('.row-count').textContent = mine.length ? String(mine.length) : '';
+
+    // Tapping the row opens a claude terminal, which is what you came for.
+    // The + offers the choice, because a plain shell is the rarer want and a
+    // long-press is not a thing anyone discovers.
+    row.addEventListener('click', (e) => {
+      if (e.target.closest('.row-add')) return;
+      if (mine.length) openTerminal(mine[0].id);
+      else newTerminal(project, 'claude');
+    });
+    row.querySelector('.row-add').addEventListener('click', (e) => {
+      e.stopPropagation();
+      sheet(`New terminal in ${project.name}`, [
+        { label: 'Run claude', run: () => newTerminal(project, 'claude') },
+        { label: 'Plain shell', run: () => newTerminal(project, null) },
+        { label: 'Back up this project now', run: () => client.send({ t: 'backup', projectPath: project.path }) },
+      ]);
+    });
+    list.appendChild(row);
+
+    for (const session of mine) list.appendChild(terminalRow(session, true));
+  }
+
+  if (!projects.length) {
+    const none = document.createElement('div');
+    none.className = 'empty';
+    none.textContent = 'No projects in the folder the PC is pointed at.';
+    list.appendChild(none);
+  }
+}
+
+function terminalRow(session, nested) {
+  const row = document.createElement('div');
+  row.className = 'row term-row state-' + session.state + (nested ? ' nested' : '');
+  row.innerHTML = '<span class="dot"></span><span class="row-name"></span>'
+    + '<span class="row-sub"></span><button class="row-x" aria-label="Close">✕</button>';
+  row.querySelector('.row-name').textContent = session.title;
+  row.querySelector('.row-sub').textContent = nested ? '' : session.projectName;
+  row.addEventListener('click', (e) => {
+    if (e.target.closest('.row-x')) return;
+    openTerminal(session.id);
+  });
+  row.querySelector('.row-x').addEventListener('click', (e) => {
+    e.stopPropagation();
+    client.send({ t: 'kill', id: session.id });
+  });
+  return row;
+}
+
+function paintTerminals() {
+  const list = $('terminallist');
+  list.textContent = '';
+
+  const all = [...sessions.values()];
+  if (!all.length) {
+    const none = document.createElement('div');
+    none.className = 'empty';
+    none.textContent = 'Nothing running. Open one from Projects.';
+    list.appendChild(none);
+    return;
+  }
+  for (const session of all) list.appendChild(terminalRow(session, false));
+}
+
+function newTerminal(project, command) {
+  const size = claimSize ? phoneSize() : { cols: 100, rows: 30 };
+  client.send({
+    t: 'create',
+    projectPath: project.path,
+    projectName: project.name,
+    command,
+    cols: size.cols,
+    rows: size.rows,
+    claim: claimSize,
+  });
+}
+
+$('newproject').addEventListener('click', () => {
+  ask('New project folder', '', (name) => client.send({ t: 'newProject', name }));
+});
+
+function onNewProject(message) {
+  if (message.ok) toast(`Created ${message.project.name}`);
+  else promptError(message.message);
+}
+
+// --------------------------------------------------------------- sessions
+
+function onSession({ kind, session }) {
+  if (kind === 'closed') sessions.delete(session.id);
+  else sessions.set(session.id, session);
+
+  paintProjects();
+  paintTerminals();
+
+  if (session.id === openId) {
+    if (kind === 'closed') closeTerminal();
+    else paintTermBar(session);
+  }
+}
+
+function onExit({ id }) {
+  sessions.delete(id);
+  const view = views.get(id);
+  if (view) {
+    view.term.dispose();
+    view.el.remove();
+    views.delete(id);
+  }
+  if (id === openId) closeTerminal();
+  paintProjects();
+  paintTerminals();
+}
+
+function onCreated({ session }) {
+  sessions.set(session.id, session);
+  paintProjects();
+  paintTerminals();
+  openTerminal(session.id);
+}
+
+function onData({ id, data, reset }) {
+  const view = views.get(id);
+  if (!view) return;
+  // The PC could not give us everything we asked for — what we were up to has
+  // scrolled out of its buffer. Anything already on screen is now the wrong
+  // end of a gap, so it goes rather than being written onto.
+  if (reset) view.term.reset();
+  view.term.write(data);
+}
+
+// ---------------------------------------------------------------- terminal
+
+function makeView(session) {
+  const el = document.createElement('div');
+  el.className = 'term-pane';
+  $('termhost').appendChild(el);
+
+  const term = new Terminal({
+    scrollback: 5000,
+    fontFamily: FONT,
+    fontSize,
+    lineHeight: LINE_HEIGHT,
+    cursorBlink: true,
+    cursorStyle: 'bar',
+    allowProposedApi: true,
+    scrollOnUserInput: true,
+    smoothScrollDuration: 0,
+    // Off by default: the phone keyboard belongs to the compose box below
+    // unless raw typing has been asked for, and a terminal that takes focus on
+    // every tap makes the whole screen jump.
+    disableStdin: !rawMode,
+    theme: THEME,
+  });
+
+  try {
+    term.loadAddon(new Unicode11Addon.Unicode11Addon());
+    term.unicode.activeVersion = '11';
+  } catch { /* the fallback widths are close enough */ }
+
+  term.open(el);
+  term.onData((data) => client.send({ t: 'input', id: session.id, data }));
+
+  const view = { term, el };
+  views.set(session.id, view);
+  return view;
+}
+
+function openTerminal(id) {
+  const session = sessions.get(id);
+  if (!session) return;
+
+  openId = id;
+  show('term');
+
+  let view = views.get(id);
+  if (!view) {
+    view = makeView(session);
+    client.attach(id);
+  }
+
+  for (const [otherId, other] of views) other.el.hidden = otherId !== id;
+
+  paintTermBar(session);
+  fitTerminal({ force: true });
+  if (rawMode) view.term.focus();
+}
+
+function closeTerminal() {
+  if (openId) client.detach(openId);
+  openId = null;
+  show('terminals');
+}
+
+$('termback').addEventListener('click', closeTerminal);
+
+function paintTermBar(session) {
+  $('termtitle').textContent = session.title;
+  $('termdot').className = 'dot state-' + session.state;
+}
+
+/**
+ * Make the PC's terminal fit a phone.
+ *
+ * Two terminals, one width. The PC's window owns it by default, so what
+ * happens here is that the same grid is drawn at whatever text size makes all
+ * of it visible — small, but complete, and readable in landscape. The other
+ * way round is one tap in the ⋮ menu: the phone claims the width, the PC
+ * letterboxes, and the text goes back to a comfortable size.
+ */
+function fitTerminal(opts = {}) {
+  applyFit(opts);
+
+  // What a character cell really measures is only known once xterm has drawn at
+  // the new font size, so the first pass works from the previous measurement
+  // and can be a row out. A second pass on the next frame, from what was
+  // actually drawn, settles it — and resizing to the size it already is costs
+  // nothing.
+  if (!opts.again) {
+    requestAnimationFrame(() => { if (openId) applyFit({ again: true }); });
+  }
+}
+
+function applyFit({ force = false } = {}) {
+  const view = views.get(openId);
+  const session = sessions.get(openId);
+  if (!view || !session) return;
+
+  const box = $('termhost');
+  const width = box.clientWidth;
+  const height = box.clientHeight;
+  if (!width || !height) return;
+
+  if (claimSize) {
+    if (view.term.options.fontSize !== fontSize) view.term.options.fontSize = fontSize;
+
+    const cell = cellSize(view);
+    const cols = Math.max(20, Math.floor(width / cell.w));
+    const rows = Math.max(8, Math.floor(height / cell.h));
+    view.term.resize(cols, rows);
+
+    // Only when it has actually changed. This runs on every viewport change,
+    // and the soft keyboard opening is a viewport change — so without the guard
+    // every tap on the compose box would reflow the shell on the PC, and a TUI
+    // repaints itself from scratch each time that happens.
+    //
+    // Opening a terminal is the exception and has to send regardless: the PC
+    // takes the width back whenever someone sits down at it, so the size can be
+    // unchanged here while the claim behind it has quietly gone.
+    if (force || view.cols !== cols || view.rows !== rows) {
+      view.cols = cols;
+      view.rows = rows;
+      client.send({ t: 'resize', id: openId, cols, rows, claim: true });
+    }
+    return;
+  }
+
+  // Mirroring the PC's grid: the rows are fixed at what the PC has, so the font
+  // is the thing that gives. Scaled from a real cell at the size it is drawn at
+  // now, rather than from what a cell that size ought to measure.
+  const cell = cellSize(view);
+  const at = view.term.options.fontSize || fontSize;
+  const byWidth = (width * at) / (session.cols * cell.w);
+  const byHeight = (height * at) / (session.rows * cell.h);
+
+  // Clipped rather than shrunk past legibility. Whatever does not fit runs off
+  // the edge, and the ⋮ menu can reflow it to this screen instead — which is
+  // the answer, and is what happens by default.
+  const size = Math.max(MIN_FONT, Math.floor(Math.min(byWidth, byHeight)));
+
+  if (view.term.options.fontSize !== size) view.term.options.fontSize = size;
+  view.term.resize(session.cols, session.rows);
+}
+
+/**
+ * What one character cell actually measures, in CSS pixels.
+ *
+ * Taken from what xterm drew rather than worked out from the font size, because
+ * a row is not `fontSize × lineHeight`: xterm measures the face's own height,
+ * which is a good deal taller than its point size, and then rounds the row up to
+ * a whole pixel. Guessing low means asking for more rows than there is room for,
+ * and the last two or three end up behind the compose bar — which is exactly
+ * what was happening.
+ */
+function cellSize(view) {
+  const core = view.term._core;
+  const cell = core && core._renderService && core._renderService.dimensions
+    && core._renderService.dimensions.css && core._renderService.dimensions.css.cell;
+  if (cell && cell.width > 0 && cell.height > 0) return { w: cell.width, h: cell.height };
+  return estimateCell(view.term.options.fontSize || fontSize);
+}
+
+/**
+ * A cell's size before there is one to measure — a terminal being opened, or one
+ * being asked for that the PC has not started yet. Deliberately generous on the
+ * height so the guess asks for too few rows rather than too many: a gap above
+ * the compose bar for one frame is invisible, a clipped last line is not.
+ */
+function estimateCell(size) {
+  return { w: size * charRatio(), h: Math.ceil(size * LINE_HEIGHT * 1.3) };
+}
+
+/**
+ * How wide one character is, as a fraction of the font size.
+ *
+ * Measured rather than assumed: it is 0.6 for most monospace faces and not for
+ * all of them, and being wrong by a twentieth costs a column at the right-hand
+ * edge. But a canvas quietly ignores a font it cannot parse and keeps whatever
+ * it had — 10px sans-serif — so an unusable answer here would come back as a
+ * confident 0.08 and ask for four hundred columns. Anything outside the range
+ * real monospace faces actually occupy is treated as not having measured.
+ */
+let ratioCache = null;
+function charRatio() {
+  if (ratioCache) return ratioCache;
+
+  let measured = 0;
+  try {
+    const canvas = document.createElement('canvas').getContext('2d');
+    canvas.font = `100px ${FONT}`;
+    measured = canvas.measureText('M').width / 100;
+  } catch {
+    measured = 0;
+  }
+
+  ratioCache = measured >= 0.35 && measured <= 1 ? measured : 0.6;
+  return ratioCache;
+}
+
+/**
+ * The grid this phone would like, for a terminal that does not exist yet and so
+ * has nothing to measure. Whatever this gets wrong is corrected the moment the
+ * terminal opens and a real cell can be measured.
+ */
+function phoneSize() {
+  const box = $('termhost');
+  const cell = estimateCell(fontSize);
+  const width = box.clientWidth || window.innerWidth;
+  const height = box.clientHeight || window.innerHeight * 0.5;
+  return {
+    cols: Math.max(20, Math.floor(width / cell.w)),
+    rows: Math.max(8, Math.floor(height / cell.h)),
+  };
+}
+
+// Anything that changes the shape of the box the terminal lives in: the soft
+// keyboard opening, rotation, and — the one that was getting missed — the
+// compose box growing a line as a longer prompt is typed into it. The terminal
+// has to give those rows up rather than have its last lines end up underneath.
+if (window.ResizeObserver) {
+  new ResizeObserver(() => { if (openId) fitTerminal(); }).observe($('termhost'));
+}
+
+// Belt and braces for the viewport changes a WebView reports without the box
+// itself changing size.
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', () => { if (openId) fitTerminal(); });
+}
+window.addEventListener('orientationchange', () => setTimeout(() => { if (openId) fitTerminal(); }, 250));
+window.addEventListener('resize', () => { if (openId) fitTerminal(); });
+
+// ------------------------------------------------------------ typing to it
+
+// What each key on the strip actually sends. Arrows and Esc are the ones a
+// phone keyboard simply does not have; 1, 2 and 3 are there because they are
+// the answers to Claude's permission prompts and hunting for them on a number
+// row you have to switch layouts to reach is the single most annoying thing
+// about driving Claude from a phone.
+const KEYS = {
+  esc: '',
+  tab: '\t',
+  up: '[A',
+  down: '[B',
+  right: '[C',
+  left: '[D',
+  ctrlc: '',
+  enter: '\r',
+  1: '1',
+  2: '2',
+  3: '3',
+};
+
+for (const button of document.querySelectorAll('#keybar button')) {
+  // Down rather than click: a tap that moves a pixel is a scroll to the
+  // browser and never becomes a click, which on a key strip reads as the
+  // button being broken.
+  button.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    const data = KEYS[button.dataset.key];
+    if (openId && data) client.send({ t: 'input', id: openId, data });
+  });
+}
+
+const compose = $('compose');
+
+function sendComposed() {
+  const text = compose.value;
+  if (!openId || !text.trim()) return;
+  // As one message, ending in a carriage return: this is a whole prompt going
+  // in at once, which is the entire point of the box. Per-keystroke over wifi
+  // to a TUI that redraws on every character is the thing it exists to avoid.
+  client.send({ t: 'input', id: openId, data: text + '\r' });
+  compose.value = '';
+  compose.style.height = 'auto';
+}
+
+$('send').addEventListener('click', sendComposed);
+
+compose.addEventListener('input', () => {
+  // Grow with what is typed, up to a few lines, then scroll inside itself.
+  compose.style.height = 'auto';
+  compose.style.height = Math.min(compose.scrollHeight, 120) + 'px';
+});
+
+compose.addEventListener('keydown', (e) => {
+  // A hardware or floating keyboard with a real Enter on it: send, rather than
+  // inserting a newline nobody asked for in a one-line box.
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendComposed();
+  }
+});
+
+function applyInputMode() {
+  $('composebar').hidden = rawMode;
+  for (const [, view] of views) view.term.options.disableStdin = !rawMode;
+  const view = views.get(openId);
+  if (rawMode && view) view.term.focus();
+}
+
+// ------------------------------------------------------------- the ⋮ menu
+
+function sheet(title, items) {
+  const box = $('sheetitems');
+  box.textContent = '';
+
+  const head = document.createElement('div');
+  head.className = 'sheet-title';
+  head.textContent = title;
+  box.appendChild(head);
+
+  for (const item of items) {
+    const button = document.createElement('button');
+    button.className = 'sheet-item';
+    button.textContent = item.label;
+    button.addEventListener('click', () => {
+      $('sheet').hidden = true;
+      item.run();
+    });
+    box.appendChild(button);
+  }
+  $('sheet').hidden = false;
+}
+
+$('sheet').addEventListener('click', (e) => {
+  if (e.target === $('sheet') || e.target.classList.contains('cancel')) $('sheet').hidden = true;
+});
+
+$('termmenu').addEventListener('click', () => {
+  const session = sessions.get(openId);
+  if (!session) return;
+
+  sheet(session.title, [
+    {
+      label: claimSize ? "Show the PC's layout" : 'Reflow to this screen',
+      run: () => {
+        claimSize = !claimSize;
+        store.set('claimSize', claimSize);
+        if (!claimSize) client.send({ t: 'release', id: openId, cols: 120, rows: 30 });
+        fitTerminal({ force: true });
+      },
+    },
+    {
+      label: rawMode ? 'Use the compose box' : 'Type straight into the terminal',
+      run: () => { rawMode = !rawMode; store.set('rawMode', rawMode); applyInputMode(); },
+    },
+    { label: 'Clear what is on screen', run: () => { const v = views.get(openId); if (v) v.term.clear(); } },
+    { label: 'Close this terminal', run: () => client.send({ t: 'kill', id: openId }) },
+  ]);
+});
+
+// ------------------------------------------------------------- little modal
+
+let promptRun = null;
+
+function ask(title, value, run) {
+  $('prompttitle').textContent = title;
+  $('promptinput').value = value;
+  $('prompterror').textContent = '';
+  promptRun = run;
+  $('prompt').hidden = false;
+  $('promptinput').focus();
+}
+
+function promptError(message) {
+  $('prompterror').textContent = message;
+  $('prompt').hidden = false;
+}
+
+$('promptok').addEventListener('click', () => {
+  const value = $('promptinput').value.trim();
+  if (!value) return;
+  $('prompt').hidden = true;
+  if (promptRun) promptRun(value);
+});
+$('promptcancel').addEventListener('click', () => { $('prompt').hidden = true; });
+$('promptinput').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('promptok').click(); });
+
+// ----------------------------------------------------------------- settings
+
+function paintSettings() {
+  $('setwhere').textContent = client.online() ? `${pcName} — ${host}:${port}` : `${host}:${port} (offline)`;
+  $('fontsize').textContent = `${fontSize}px`;
+  $('rawmode').checked = rawMode;
+  $('claimsize').checked = claimSize;
+}
+
+function setFont(next) {
+  fontSize = Math.min(24, Math.max(MIN_FONT, next));
+  store.set('fontSize', fontSize);
+  paintSettings();
+  if (openId) fitTerminal();
+}
+
+$('fontup').addEventListener('click', () => setFont(fontSize + 1));
+$('fontdown').addEventListener('click', () => setFont(fontSize - 1));
+
+$('rawmode').addEventListener('change', (e) => {
+  rawMode = e.target.checked;
+  store.set('rawMode', rawMode);
+  applyInputMode();
+});
+
+$('claimsize').addEventListener('change', (e) => {
+  claimSize = e.target.checked;
+  store.set('claimSize', claimSize);
+  // Forced: turning this back on has to reclaim the width even when the numbers
+  // work out the same as the last time this phone held it.
+  if (openId) fitTerminal({ force: true });
+});
+
+$('forget').addEventListener('click', () => {
+  client.disconnect();
+  store.drop('token');
+  sessions.clear();
+  for (const [, view] of views) { view.term.dispose(); view.el.remove(); }
+  views.clear();
+  $('pairfield').hidden = false;
+  $('connectstate').textContent = 'Pair with a PC again.';
+  show('connect');
+});
+
+// ---------------------------------------------------------- usage bars
+
+function onUsage({ usage }) {
+  const box = $('usage');
+  box.hidden = !usage || !usage.available;
+  if (box.hidden) return;
+
+  drawBar($('u5'), $('u5pct'), usage.fiveHour);
+  drawBar($('u7'), $('u7pct'), usage.sevenDay);
+
+  const parts = [];
+  if (usage.capped) parts.push(`${usage.capped === 'sevenDay' ? '7d' : '5h'} limit reached`);
+  const counting = usage[usage.capped || 'fiveHour'];
+  if (counting && counting.resetsAt > Date.now()) {
+    const mins = Math.ceil((counting.resetsAt - Date.now()) / 60_000);
+    parts.push(mins < 60 ? `resets in ${mins}m` : `resets in ${Math.floor(mins / 60)}h ${mins % 60}m`);
+  }
+  $('usagenote').textContent = parts.join(' · ');
+}
+
+function drawBar(fill, pct, window) {
+  if (!window) { fill.style.width = '0'; pct.textContent = '--'; return; }
+  fill.style.width = `${window.used}%`;
+  fill.classList.toggle('warn', window.used >= 75 && window.used < 90);
+  fill.classList.toggle('hot', window.used >= 90);
+  pct.textContent = `${Math.round(window.used)}%`;
+}
+
+// --------------------------------------------------------------------- boot
+
+// Android's back gesture, which has to mean "out of this terminal" before it
+// means "close the app" — otherwise reading a terminal is a one-way trip.
+if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App) {
+  const { App } = window.Capacitor.Plugins;
+  App.addListener('backButton', () => {
+    if (!$('sheet').hidden) { $('sheet').hidden = true; return; }
+    if (!$('prompt').hidden) { $('prompt').hidden = true; return; }
+    if (openId) { closeTerminal(); return; }
+    App.exitApp();
+  });
+
+  // Coming back from the lock screen is exactly when the socket has quietly
+  // died and nothing has noticed yet.
+  App.addListener('appStateChange', ({ isActive }) => { if (isActive) client.wake(); });
+}
+
+document.addEventListener('visibilitychange', () => { if (!document.hidden) client.wake(); });
+
+setInterval(() => { if (!$('projects').hidden) client.send({ t: 'usage' }); }, 60_000);
+
+(function boot() {
+  $('host').value = host || '';
+  $('port').value = String(port);
+  applyInputMode();
+
+  const token = store.get('token');
+  if (host && token) {
+    show('projects');
+    $('pchost').textContent = 'connecting…';
+    client.connect({ host, port, token, name: deviceName() });
+    return;
+  }
+
+  // No key means pairing, whether or not this phone has seen a PC before — and
+  // a first run is the one time the code box is certainly needed, so hiding it
+  // then was exactly the wrong way round.
+  $('pairfield').hidden = false;
+  show('connect');
+  $('connectstate').textContent = host
+    ? 'Pair this phone with your PC.'
+    : 'Tap Find my PC, or type its address, then pair with the code the PC shows.';
+})();

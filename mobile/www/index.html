@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
+<meta name="color-scheme" content="dark" />
+<title>Hangar</title>
+<link rel="stylesheet" href="vendor/xterm.css" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<!-- Connect ------------------------------------------------------------ -->
+<!-- The only screen anyone sees before pairing, and the one they come back
+     to when the PC is off. It says what is happening rather than spinning. -->
+<section id="connect" class="screen connect">
+  <div class="connect-inner">
+    <div class="brand">Hangar</div>
+    <p id="connectstate" class="connect-state">Looking for your PC…</p>
+
+    <div id="found" class="found"></div>
+
+    <div class="field">
+      <label for="host">PC address</label>
+      <input id="host" type="text" inputmode="url" autocapitalize="off" autocorrect="off"
+             spellcheck="false" placeholder="192.168.1.42" />
+    </div>
+
+    <div class="field">
+      <label for="port">Port</label>
+      <input id="port" type="text" inputmode="numeric" value="7433" />
+    </div>
+
+    <div id="pairfield" class="field" hidden>
+      <label for="code">Pairing code</label>
+      <input id="code" type="text" inputmode="text" autocapitalize="characters" autocorrect="off"
+             spellcheck="false" maxlength="6" placeholder="ABC123" />
+      <p class="hint">On the PC: Settings → Phone → Show a code.</p>
+    </div>
+
+    <div id="connecterror" class="error"></div>
+
+    <div class="connect-actions">
+      <button id="scan" class="btn">Find my PC</button>
+      <button id="connectgo" class="btn primary">Connect</button>
+    </div>
+  </div>
+</section>
+
+<!-- Projects ----------------------------------------------------------- -->
+<section id="projects" class="screen" hidden>
+  <header class="bar">
+    <span class="bar-title">Projects</span>
+    <span id="pchost" class="bar-sub"></span>
+    <button id="newproject" class="bar-btn" aria-label="New project">+</button>
+  </header>
+
+  <div id="projectlist" class="list"></div>
+
+  <div id="usage" class="usage" hidden>
+    <div class="usage-row"><span class="usage-name">5h</span>
+      <span class="usage-track"><span id="u5" class="usage-fill"></span></span>
+      <span id="u5pct" class="usage-pct"></span></div>
+    <div class="usage-row"><span class="usage-name">7d</span>
+      <span class="usage-track"><span id="u7" class="usage-fill"></span></span>
+      <span id="u7pct" class="usage-pct"></span></div>
+    <div id="usagenote" class="usage-note"></div>
+  </div>
+</section>
+
+<!-- Terminals ---------------------------------------------------------- -->
+<section id="terminals" class="screen" hidden>
+  <header class="bar"><span class="bar-title">Terminals</span></header>
+  <div id="terminallist" class="list"></div>
+</section>
+
+<!-- Settings ----------------------------------------------------------- -->
+<section id="settings" class="screen" hidden>
+  <header class="bar"><span class="bar-title">Settings</span></header>
+  <div class="list settings-list">
+    <div class="setting">
+      <div class="setting-name">Connected to</div>
+      <div id="setwhere" class="setting-value"></div>
+    </div>
+    <div class="setting">
+      <div class="setting-name">Terminal text size</div>
+      <div class="stepper">
+        <button id="fontdown" class="btn small">–</button>
+        <span id="fontsize" class="stepper-value"></span>
+        <button id="fontup" class="btn small">+</button>
+      </div>
+    </div>
+    <label class="setting toggle">
+      <span>
+        <span class="setting-name">Type straight into the terminal</span>
+        <span class="setting-help">Off is the compose box, which sends a whole line at
+          once and does not fight autocorrect. On puts the phone keyboard into the
+          terminal itself, for the times you need single keys.</span>
+      </span>
+      <input id="rawmode" type="checkbox" />
+    </label>
+    <label class="setting toggle">
+      <span>
+        <span class="setting-name">Reflow terminals to this screen</span>
+        <span class="setting-help">On makes the terminal the width of this phone, which is
+          the only way it is readable — the PC letterboxes its own view until you turn this
+          off again. Off shows the PC's exact layout shrunk to fit, which for a wide
+          terminal means text too small to read.</span>
+      </span>
+      <input id="claimsize" type="checkbox" />
+    </label>
+    <button id="forget" class="btn danger wide">Forget this PC</button>
+  </div>
+</section>
+
+<!-- One terminal, over everything ---------------------------------------- -->
+<section id="term" class="screen term" hidden>
+  <header class="bar term-bar">
+    <button id="termback" class="bar-btn" aria-label="Back">‹</button>
+    <span id="termdot" class="dot"></span>
+    <span id="termtitle" class="bar-title"></span>
+    <button id="termmenu" class="bar-btn" aria-label="More">⋮</button>
+  </header>
+
+  <div id="termhost" class="term-host"></div>
+
+  <!-- The keys a phone keyboard does not have, and the two digits that answer
+       Claude's permission prompts. -->
+  <div id="keybar" class="keybar">
+    <button data-key="esc">esc</button>
+    <button data-key="tab">tab</button>
+    <button data-key="up">↑</button>
+    <button data-key="down">↓</button>
+    <button data-key="left">←</button>
+    <button data-key="right">→</button>
+    <button data-key="ctrlc">^C</button>
+    <button data-key="1">1</button>
+    <button data-key="2">2</button>
+    <button data-key="3">3</button>
+    <button data-key="enter">⏎</button>
+  </div>
+
+  <div id="composebar" class="compose">
+    <textarea id="compose" rows="1" placeholder="Type a prompt…"
+              autocapitalize="sentences" autocomplete="off" spellcheck="false"></textarea>
+    <button id="send" class="send" aria-label="Send">➤</button>
+  </div>
+</section>
+
+<!-- The ⋮ menu, and the new-project prompt ------------------------------ -->
+<div id="sheet" class="sheet" hidden>
+  <div class="sheet-card">
+    <div id="sheetitems"></div>
+    <button class="sheet-item cancel">Cancel</button>
+  </div>
+</div>
+
+<div id="prompt" class="sheet" hidden>
+  <div class="sheet-card prompt-card">
+    <div id="prompttitle" class="prompt-title"></div>
+    <input id="promptinput" type="text" autocapitalize="off" autocorrect="off" spellcheck="false" />
+    <div id="prompterror" class="error"></div>
+    <div class="prompt-actions">
+      <button id="promptcancel" class="btn">Cancel</button>
+      <button id="promptok" class="btn primary">OK</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+
+<!-- Bottom bar ---------------------------------------------------------- -->
+<nav id="nav" class="nav" hidden>
+  <button data-screen="projects" class="nav-btn on">
+    <span class="nav-icon">▤</span><span>Projects</span>
+  </button>
+  <button data-screen="terminals" class="nav-btn">
+    <span class="nav-icon">▶</span><span>Terminals</span>
+  </button>
+  <button data-screen="settings" class="nav-btn">
+    <span class="nav-icon">⚙</span><span>Settings</span>
+  </button>
+</nav>
+
+<script src="vendor/xterm.js"></script>
+<script src="vendor/addon-unicode11.js"></script>
+<script src="client.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

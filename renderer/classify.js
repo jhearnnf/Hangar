@@ -248,5 +248,98 @@
     };
   }
 
-  return { stripAnsi, classify, nameFromTitle, nameFromPrompt, createInputCapture, STATES, SIGNALS };
+  /**
+   * Pull terminal titles out of raw pty output.
+   *
+   * xterm does this for us in the renderer, and used to be the only place that
+   * needed it. Now the main process names sessions too — it is the side both
+   * the window and the phone are looking at, and a name only one of them knew
+   * would be two different tabs for one terminal. So the same OSC sequence is
+   * read here, from the bytes, before anything has drawn them.
+   *
+   * `ESC ] 0 ; text BEL` and `ESC ] 2 ; text BEL` are the two that set a title
+   * (0 sets the icon name along with it); either may end with `ESC \` instead
+   * of the BEL. Parser state outlives each chunk, because a sequence is free to
+   * be split across two reads — which is exactly what happens to a long title.
+   */
+  const BEL = '';
+
+  function createTitleCapture(onTitle, { maxLength = 512 } = {}) {
+    let mode = 'text';    // text | esc | osc | osc-esc
+    let buffer = '';
+
+    function finish() {
+      // "0;" and "2;" are the titles; every other OSC (52 clipboard, 8 links,
+      // 4 palette) shares the sequence and is none of our business.
+      const match = /^([02]);([\s\S]*)$/.exec(buffer);
+      if (match) onTitle(match[2]);
+      buffer = '';
+      mode = 'text';
+    }
+
+    return function feed(data) {
+      const text = String(data);
+
+      for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+
+        switch (mode) {
+          case 'text':
+            if (ch === ESC) mode = 'esc';
+            break;
+
+          case 'esc':
+            // Anything but ']' is some other sequence, and the character after
+            // an ESC is not a title however interesting it looks.
+            if (ch === ']') { mode = 'osc'; buffer = ''; } else mode = 'text';
+            break;
+
+          case 'osc':
+            if (ch === BEL) finish();
+            else if (ch === ESC) mode = 'osc-esc';
+            else {
+              buffer += ch;
+              // A runaway OSC — a binary payload with no terminator in it —
+              // must not grow while we wait for a BEL that is not coming.
+              if (buffer.length > maxLength) { buffer = ''; mode = 'text'; }
+            }
+            break;
+
+          case 'osc-esc':
+            // ESC backslash is the other way an OSC ends. An ESC followed by
+            // anything else has abandoned the sequence.
+            if (ch === '\\') finish();
+            else { buffer = ''; mode = 'text'; }
+            break;
+
+          default:
+            mode = 'text';
+        }
+      }
+    };
+  }
+
+  // The alternate screen buffer, which is what makes a full-screen TUI
+  // full-screen. Worth tracking because a viewer joining a session mid-flight
+  // is looking at a screen painted before it arrived: replaying the bytes gets
+  // it most of the way there, and a repaint nudge does the rest.
+  const ALT_SCREEN = ESC + '\\[\\?(?:1049|47|1047)(h|l)';
+
+  /**
+   * Whether the terminal is on the alternate screen after this chunk, given
+   * where it was before. Only the last switch in the chunk counts.
+   */
+  function altScreenAfter(was, data) {
+    const re = new RegExp(ALT_SCREEN, 'g');
+    let state = Boolean(was);
+    let match;
+    while ((match = re.exec(String(data))) !== null) state = match[1] === 'h';
+    return state;
+  }
+
+  return {
+    stripAnsi, classify, nameFromTitle, nameFromPrompt, createInputCapture,
+    createTitleCapture, altScreenAfter,
+    STATES, SIGNALS,
+  };
 });

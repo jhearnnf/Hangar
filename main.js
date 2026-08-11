@@ -1,23 +1,48 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, Menu, screen, dialog, shell: electronShell } = require('electron');
+const {
+  app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, screen, dialog, shell: electronShell,
+} = require('electron');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
+const { execFile } = require('child_process');
 const pty = require('node-pty');
 const { defaultShell, argsFor, listProjects, PROJECT_IGNORE } = require('./shell');
 const { validateProjectName } = require('./project-name');
 const { parseState, restoreState, MIN_SIZE } = require('./window-state');
 const { mirror, sweepDetached } = require('./backup');
 const { createUsageReader } = require('./usage');
+const { createSessions } = require('./sessions');
+const { createDevices, DEVICES_FILE } = require('./devices');
+const { createServer } = require('./server');
+const { lanAddresses, startResponder, DISCOVERY_PORT } = require('./discovery');
+const firewall = require('./firewall');
+const { loginItem, startedHidden } = require('./startup');
 const {
   CONFIG_FILE, suggestions, parseConfig, resolveConfig, validateConfig,
 } = require('./config');
 
-// One pty per tab. Keyed by an id the renderer generates.
-const sessions = new Map();
-
 let win = null;
+
+/**
+ * One Hangar at a time.
+ *
+ * There was no way to end up with two before: you launched it yourself, and a
+ * second one was only ever a mistake you could see. Now Windows launches it at
+ * login as well, so a double-click half an hour later would be a second copy
+ * fighting the first for the port — and losing, silently. The second copy hands
+ * its launch to the first, which shows itself, which is what the click meant.
+ */
+const onlyInstance = app.requestSingleInstanceLock();
+if (!onlyInstance) app.quit();
+
+app.on('second-instance', () => {
+  if (!win) return;
+  if (win.isMinimized()) win.restore();
+  if (!win.isVisible()) win.show();
+  win.focus();
+});
 
 // ----------------------------------------------------------------- settings
 
@@ -57,7 +82,17 @@ function applyConfig(next) {
 function saveConfig(next) {
   fs.mkdirSync(path.dirname(configFile()), { recursive: true });
   fs.writeFileSync(configFile(), `${JSON.stringify(next, null, 2)}\n`);
-  return applyConfig(next);
+  const applied = applyConfig(next);
+
+  // Three of these settings are about the world outside this window — a
+  // startup entry, a listening port, an icon by the clock — and all three take
+  // effect on Save rather than on the next launch. A settings screen that
+  // needed a restart to mean anything would be a settings screen nobody
+  // believed.
+  applyStartup(applied);
+  applyRemote(applied);
+  applyTray(applied);
+  return applied;
 }
 
 // Which fields the environment has taken over, so the setup screen can show
@@ -66,7 +101,105 @@ function envOverrides(env = process.env) {
   return {
     projectsRoot: Boolean(env.HANGAR_PROJECTS_ROOT),
     backupRoot: Boolean(env.HANGAR_BACKUP_ROOT),
+    remotePort: Boolean(env.HANGAR_REMOTE_PORT),
   };
+}
+
+// ------------------------------------------------------- start with Windows
+
+/**
+ * Put Hangar in — or take it out of — the per-user startup list.
+ *
+ * Called on save and once at launch. The second one matters: an entry that
+ * points at a checkout which has since moved is an entry that fails silently
+ * every morning, and rewriting it each launch is a one-line way never to have
+ * to think about that.
+ */
+function applyStartup(current) {
+  if (process.platform === 'linux') return;   // no login-item API there
+
+  try {
+    const item = loginItem({
+      execPath: process.execPath,
+      appPath: app.getAppPath(),
+      packaged: app.isPackaged,
+      hidden: current.startMinimised,
+    });
+    app.setLoginItemSettings({ openAtLogin: current.autoStart, path: item.path, args: item.args });
+  } catch (err) {
+    console.error('Hangar: could not update the startup entry', err);
+  }
+}
+
+// ------------------------------------------------------------------- tray
+
+let tray = null;
+
+/**
+ * The icon by the clock, which exists for exactly one reason: something has to
+ * be clickable when there is no window.
+ *
+ * So it appears with "start minimised" and not otherwise. Turning that on also
+ * changes what closing the window means — hide rather than quit — because a
+ * Hangar that vanished when you closed its window would take every running
+ * terminal and the phone's connection with it, which is the opposite of what
+ * someone asking for a tray icon wants.
+ */
+function applyTray(current) {
+  if (current.startMinimised) {
+    if (!tray) createTray();
+    paintTray();
+    return;
+  }
+  if (tray) {
+    tray.destroy();
+    tray = null;
+  }
+}
+
+function createTray() {
+  const file = path.join(__dirname, 'assets', process.platform === 'win32' ? 'icon.ico' : 'icon-32.png');
+  let image;
+  try {
+    image = nativeImage.createFromPath(file);
+  } catch {
+    image = nativeImage.createEmpty();
+  }
+
+  tray = new Tray(image);
+  tray.setToolTip('Hangar');
+  tray.on('click', showWindow);
+  tray.on('double-click', showWindow);
+}
+
+function paintTray() {
+  if (!tray) return;
+
+  const running = sessions.count();
+  const phone = server && server.running()
+    ? `Phones can connect on port ${server.port()}`
+    : 'Phone access is off';
+
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: 'Open Hangar', click: showWindow },
+    { type: 'separator' },
+    { label: running === 1 ? '1 terminal running' : `${running} terminals running`, enabled: false },
+    { label: phone, enabled: false },
+    { type: 'separator' },
+    { label: 'Quit Hangar', click: () => app.quit() },
+  ]));
+
+  tray.setToolTip(running ? `Hangar — ${running} terminal${running === 1 ? '' : 's'}` : 'Hangar');
+}
+
+function showWindow() {
+  if (!win || win.isDestroyed()) {
+    createWindow();
+    return;
+  }
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
 }
 
 // ------------------------------------------------------------- window state
@@ -174,7 +307,12 @@ function createWindow() {
   win.once('ready-to-show', () => {
     if (state.fullScreen) win.setFullScreen(true);
     else if (state.maximized) win.maximize();
-    win.show();
+    // Launched by Windows at login with "start minimised" ticked: the window is
+    // built, the renderer runs, the server is up — there is simply nothing on
+    // screen until the tray icon is clicked. Only that launch passes the flag,
+    // so opening Hangar yourself always shows you a window.
+    if (!hiddenLaunch) win.show();
+    hiddenLaunch = false;
   });
 
   for (const event of ['resize', 'move', 'maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen']) {
@@ -182,17 +320,22 @@ function createWindow() {
   }
 
   // 'close' still has a live window to measure; 'closed' does not.
-  win.on('close', () => {
+  win.on('close', (event) => {
     clearTimeout(saveTimer);
     saveState();
+
+    // With a tray icon there is somewhere to come back from, so closing the
+    // window puts Hangar down rather than ending it: the terminals keep
+    // running and the phone keeps its connection. Quit from the tray menu, or
+    // untick the setting, to get the old behaviour back.
+    if (!quitting && config && config.startMinimised) {
+      event.preventDefault();
+      win.hide();
+    }
   });
 
   win.on('closed', () => {
     win = null;
-    for (const s of sessions.values()) {
-      try { s.proc.kill(); } catch { /* already gone */ }
-    }
-    sessions.clear();
   });
 }
 
@@ -209,6 +352,13 @@ app.setAppUserModelId('com.jameshangar.hangar');
 // orphan the config.json that is already sitting in %APPDATA%\hangar.
 if (process.platform === 'darwin') app.setName('Hangar');
 
+// Set once, at the top of the process, because the flag says something about
+// *this* launch that is no longer true a moment later.
+let hiddenLaunch = startedHidden();
+let quitting = false;
+
+app.on('before-quit', () => { quitting = true; });
+
 // Settings first: the window's very first IPC call asks for them, and the
 // projects root decides what the sidebar is a listing of.
 app.whenReady().then(() => {
@@ -223,13 +373,31 @@ app.whenReady().then(() => {
     } catch { /* cosmetic, never worth failing a launch over */ }
   }
 
-  applyConfig(loadConfig());
+  const current = applyConfig(loadConfig());
+
+  // A hidden launch only makes sense while the setting that asks for one is
+  // still on. The flag is written into the startup entry, and an entry can
+  // outlive the tick box that wrote it — after an unclean shutdown, or if the
+  // config was rolled back — so both have to agree before a launch shows
+  // nothing.
+  hiddenLaunch = hiddenLaunch && current.startMinimised;
+
+  applyStartup(current);
+  applyTray(current);
+  applyRemote(current);
   createWindow();
 });
 
-app.on('window-all-closed', () => app.quit());
+app.on('window-all-closed', () => {
+  // With the tray on, closing the window is not the end of Hangar and this
+  // never fires — but a window that fails to build, or a platform that
+  // destroys it anyway, would otherwise leave a process with no way back.
+  if (!config || !config.startMinimised) app.quit();
+});
+
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  else showWindow();
 });
 
 // ------------------------------------------------------------------ projects
@@ -238,22 +406,21 @@ function projectsRoot() {
   return config.projectsRoot;
 }
 
-ipcMain.handle('projects:list', () => {
-  const root = projectsRoot();
-  // The skip list travels with the listing so the new-project modal can say
-  // why a name it would have filtered out is refused, without keeping its own
-  // copy of it.
-  return { root, projects: listProjects(root), ignored: [...PROJECT_IGNORE] };
-});
+// The skip list travels with the listing so the new-project modal can say why
+// a name it would have filtered out is refused, without keeping its own copy
+// of it. `projectListing()` is defined further down, beside the server, since
+// both sides ask for exactly this.
+ipcMain.handle('projects:list', () => projectListing());
 
 /**
  * Create an empty project folder and hand back the refreshed listing.
  *
- * Validated again here rather than trusting the modal: this is the side that
- * actually makes the folder. Failures come back as a message to show under the
- * field, since none of them are exceptional enough to throw across the bridge.
+ * Validated here rather than trusting whoever asked: this is the side that
+ * actually makes the folder, and there are two callers now — the modal in the
+ * window and a phone. Failures come back as a message to show under the field,
+ * since none of them are exceptional enough to throw.
  */
-ipcMain.handle('projects:create', (_event, { name }) => {
+function makeProject(name) {
   const root = path.resolve(projectsRoot());
   const check = validateProjectName(name, {
     existing: listProjects(root).map((p) => p.name),
@@ -277,6 +444,14 @@ ipcMain.handle('projects:create', (_event, { name }) => {
   }
 
   return { ok: true, project: { name: check.name, path: dir }, projects: listProjects(root) };
+}
+
+ipcMain.handle('projects:create', (_event, { name }) => {
+  const result = makeProject(name);
+  // A folder that appeared on this machine is news to every phone looking at
+  // the same folder, whichever side asked for it.
+  if (result.ok) server.broadcastProjects();
+  return result;
 });
 
 // ------------------------------------------------------------------- backups
@@ -348,6 +523,14 @@ let quitSweepStarted = false;
 app.on('before-quit', () => {
   if (quitSweepStarted) return;
   quitSweepStarted = true;
+
+  // The terminals used to die with the window because they belonged to it.
+  // They belong to this process now and outlive a closed window on purpose, so
+  // the quit is where they end — before the sweep below, so the copy it makes
+  // is of a folder nothing is still writing to.
+  sessions.killAll();
+  if (responder) { responder.close(); responder = null; }
+  server.dispose();
   // config is null if we are quitting before ever becoming ready.
   if (!config || !config.backupEnabled) return;
   sweepDetached(listProjects(projectsRoot()).map((p) => p.path), { root: config.backupRoot });
@@ -367,16 +550,23 @@ function childEnv() {
   return env;
 }
 
-ipcMain.handle('pty:create', (_event, { id, cwd, command, cols, rows }) => {
+/**
+ * Start one shell, for whoever asked.
+ *
+ * This is the only thing in the app that knows how to make a pty, and it is
+ * handed to the session registry rather than called from anywhere: the window
+ * and the phone both go through the registry, so neither can start a terminal
+ * the other does not know about.
+ */
+function spawnSession({ cwd, command, cols, rows }) {
   const shell = defaultShell();
   const startDir = cwd && fs.existsSync(cwd) ? cwd : os.homedir();
-
   const args = argsFor(shell, command);
 
-  // What is thrown here crosses to the renderer and ends up on the screen, and
-  // "spawn ENOENT" on its own is not something anyone can act on. The shell it
-  // tried, the arguments it tried them with and the directory it tried them in
-  // are the three things that actually name the problem.
+  // What is thrown here ends up on someone's screen, and "spawn ENOENT" on its
+  // own is not something anyone can act on. The shell it tried, the arguments
+  // it tried them with and the directory it tried them in are the three things
+  // that actually name the problem.
   let proc;
   try {
     proc = spawnPty(shell, args, { cols, rows, cwd: startDir });
@@ -385,19 +575,47 @@ ipcMain.handle('pty:create', (_event, { id, cwd, command, cols, rows }) => {
       `${err.message}${spawnHelperHint()}\n\n${shell.file} ${args.join(' ')}\nin ${startDir}`);
   }
 
-  sessions.set(id, { proc, paused: false });
+  return { proc, shell: path.basename(shell.file), cwd: startDir, args };
+}
 
-  proc.onData((data) => {
-    if (win && !win.isDestroyed()) win.webContents.send('pty:data', { id, data });
-  });
+const sessions = createSessions({ spawn: spawnSession });
 
-  proc.onExit(({ exitCode }) => {
-    sessions.delete(id);
-    if (win && !win.isDestroyed()) win.webContents.send('pty:exit', { id, exitCode });
-  });
+function toWindow(channel, payload) {
+  if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
+}
 
-  return { pid: proc.pid, shell: path.basename(shell.file), cwd: startDir };
+// The window is a viewer like any other. It gets the raw output, and it gets
+// told when a terminal appears, is renamed, changes stage or goes — including
+// the ones a phone opened, which is how they show up in the sidebar without
+// the sidebar knowing anything about phones.
+// The sequence number rides along so a window rebuilding itself around a
+// terminal that was already running can tell which of the chunks arriving live
+// are ones the replayed history already covered.
+sessions.on('data', ({ id, seq, data }) => toWindow('pty:data', { id, seq, data }));
+sessions.on('exit', (payload) => toWindow('pty:exit', payload));
+
+// A terminal going quiet is not always a change of stage — most of the time it
+// was already resting — but it is always the moment a backup countdown can be
+// armed, so it is said out loud rather than inferred from a stage event that
+// may never come.
+sessions.on('idle', ({ projectPath }) => toWindow('session:idle', { projectPath }));
+sessions.on('session', (payload) => {
+  toWindow('session:event', payload);
+  paintTray();
 });
+
+ipcMain.handle('pty:create', (_event, { cwd, projectName, command, cols, rows }) => (
+  // The id comes back from here rather than going in: two screens can both ask
+  // for a terminal, and only the one place that keeps the list can promise the
+  // name is not already taken.
+  sessions.create({ projectPath: cwd, projectName, command, cols, rows })
+));
+
+ipcMain.handle('sessions:list', () => sessions.list());
+
+// Everything a viewer missed. The window asks for this when it is rebuilt
+// around terminals that were already running.
+ipcMain.handle('sessions:history', (_event, { id, seq }) => sessions.history(id, seq));
 
 /**
  * The one thing "posix_spawnp failed." is nearly always about.
@@ -446,34 +664,199 @@ function spawnPty(shell, args, { cols, rows, cwd }) {
   });
 }
 
-ipcMain.on('pty:write', (_event, { id, data }) => {
-  const s = sessions.get(id);
-  if (s) s.proc.write(data);
-});
+ipcMain.on('pty:write', (_event, { id, data }) => sessions.write(id, data));
 
-ipcMain.on('pty:resize', (_event, { id, cols, rows }) => {
-  const s = sessions.get(id);
-  if (!s) return;
-  try { s.proc.resize(Math.max(cols, 1), Math.max(rows, 1)); } catch { /* racing a dying pty */ }
-});
+// 'desktop' is the window's name as a size owner. A terminal a phone has taken
+// the width of ignores this until the phone gives it back.
+ipcMain.on('pty:resize', (_event, { id, cols, rows }) => sessions.resize(id, cols, rows, 'desktop'));
+
+/**
+ * Take the width back for the window.
+ *
+ * A phone that has reflowed a terminal to its own screen keeps it that way
+ * until it says otherwise, which is right while you are holding the phone and
+ * wrong the moment you sit back down: the window would go on painting into a
+ * phone-shaped corner of itself with no way to say so. Sitting down and looking
+ * at it is the signal, so activating a tab or focusing the window claims it.
+ */
+ipcMain.on('pty:claim', (_event, { id, cols, rows }) => sessions.claimSize(id, 'desktop', cols, rows));
 
 // Flow control. When the renderer falls behind on a burst of output (a test
 // suite dumping thousands of lines) we stop reading from the pty rather than
 // letting the buffer overflow and drop characters.
-ipcMain.on('pty:flow', (_event, { id, pause }) => {
-  const s = sessions.get(id);
-  if (!s || s.paused === pause) return;
-  s.paused = pause;
-  if (pause) s.proc.pause(); else s.proc.resume();
-});
+ipcMain.on('pty:flow', (_event, { id, pause }) => sessions.flow(id, pause));
 
-ipcMain.on('pty:kill', (_event, { id }) => {
-  const s = sessions.get(id);
-  if (!s) return;
-  try { s.proc.kill(); } catch { /* already gone */ }
-  sessions.delete(id);
-});
+ipcMain.on('pty:kill', (_event, { id }) => sessions.kill(id));
 
 ipcMain.on('win:fullscreen', () => {
   if (win) win.setFullScreen(!win.isFullScreen());
+});
+
+// ------------------------------------------------------------ phone access
+
+const devices = createDevices({
+  load: () => JSON.parse(fs.readFileSync(path.join(app.getPath('userData'), DEVICES_FILE), 'utf8')),
+  save: (list) => {
+    const file = path.join(app.getPath('userData'), DEVICES_FILE);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `${JSON.stringify(list, null, 2)}\n`);
+  },
+});
+
+function projectListing() {
+  const root = projectsRoot();
+  return { root, projects: listProjects(root), ignored: [...PROJECT_IGNORE] };
+}
+
+const server = createServer({
+  sessions,
+  devices,
+  listProjects: projectListing,
+  createProject: (name) => {
+    const result = makeProject(name);
+    if (result.ok) toWindow('projects:changed');
+    return result;
+  },
+  usage: () => usage.get(),
+  backup: (projectPath) => (
+    config.backupEnabled
+      ? mirror(projectPath, { root: config.backupRoot })
+      : { ok: false, message: 'backups are turned off' }
+  ),
+  info: () => ({
+    app: 'Hangar',
+    name: os.hostname(),
+    version: app.getVersion(),
+    platform: process.platform,
+    backupsOn: Boolean(config && config.backupEnabled),
+  }),
+  // Handy rather than necessary: pointing a phone browser at the same port is
+  // the fastest way to find out whether the PC half of this is working, and it
+  // is the same client the app runs.
+  wwwDir: fs.existsSync(path.join(__dirname, 'mobile', 'www'))
+    ? path.join(__dirname, 'mobile', 'www')
+    : null,
+  log: (line) => { if (process.env.HANGAR_DEBUG) console.log(`[server] ${line}`); },
+});
+
+let responder = null;
+
+/**
+ * Bring the server up, down, or across to a different port, to match what
+ * Settings now says.
+ *
+ * A port that will not bind is reported back through the same channel the
+ * Settings screen is watching rather than thrown: the usual reason is another
+ * Hangar, or something else on 7433, and neither is a crash.
+ */
+let remoteError = null;
+
+async function applyRemote(current) {
+  const wanted = Boolean(current.remoteEnabled);
+  const port = current.remotePort;
+
+  if (!wanted) {
+    server.stop();
+    if (responder) { responder.close(); responder = null; }
+    remoteError = null;
+    paintTray();
+    toWindow('remote:changed');
+    return;
+  }
+
+  if (server.running() && server.port() === port) return;
+
+  server.stop();
+  if (responder) { responder.close(); responder = null; }
+
+  try {
+    await server.start(port);
+    remoteError = null;
+    responder = startResponder({
+      describe: () => ({
+        app: 'Hangar',
+        name: os.hostname(),
+        port: server.port(),
+        version: app.getVersion(),
+      }),
+      onError: (err) => {
+        // Only discovery is lost here — a phone can still be given the address
+        // by hand, so this is a note rather than a failure.
+        if (process.env.HANGAR_DEBUG) console.error('[discovery]', err.message);
+      },
+    });
+  } catch (err) {
+    remoteError = err.code === 'EADDRINUSE'
+      ? `Port ${port} is already being used by something else. Try another one.`
+      : err.message;
+  }
+
+  paintTray();
+  toWindow('remote:changed');
+}
+
+ipcMain.handle('remote:status', async () => ({
+  enabled: Boolean(config && config.remoteEnabled),
+  running: server.running(),
+  port: server.port() || (config && config.remotePort),
+  error: remoteError,
+  addresses: lanAddresses(),
+  devices: devices.list(),
+  connected: server.clients(),
+  code: devices.currentCode(),
+  // The one thing that can be perfectly configured here and still not work.
+  firewall: await firewall.check({
+    execPath: process.execPath,
+    port: (config && config.remotePort) || 7433,
+  }),
+}));
+
+/**
+ * Let Windows Firewall through to the port, with the user's consent.
+ *
+ * Rules need administrator, so this is a UAC prompt and nothing at all if it is
+ * declined. The script it runs is in `firewall.js` and is narrower than the
+ * permission Windows itself would have granted: two ports, local subnet only.
+ */
+ipcMain.handle('remote:fixFirewall', () => new Promise((resolve) => {
+  if (process.platform !== 'win32') return resolve({ ok: false, message: 'Windows only.' });
+
+  // Only where this machine actually has a mesh VPN on it. Allowing that range
+  // on a machine with no VPN would be widening the rule for a route that does
+  // not exist, which is the sort of thing a firewall rule should never do.
+  const hasMesh = lanAddresses().some((a) => a.kind === 'overlay');
+
+  const script = firewall.fixScript({
+    execPath: process.execPath,
+    port: config.remotePort,
+    discoveryPort: DISCOVERY_PORT,
+    meshRanges: hasMesh ? [firewall.MESH_RANGE] : [],
+  });
+
+  // Base64 so nothing in the script has to survive two rounds of quoting on the
+  // way through Start-Process.
+  const encoded = Buffer.from(script, 'utf16le').toString('base64');
+
+  execFile('powershell.exe', [
+    '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command',
+    `Start-Process powershell.exe -Verb RunAs -Wait -WindowStyle Hidden`
+    + ` -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-EncodedCommand','${encoded}'`,
+  ], { windowsHide: true }, async (err) => {
+    if (err) {
+      // Cancelling the UAC prompt lands here, and is not an error worth
+      // dressing up as one.
+      resolve({ ok: false, message: 'Windows did not allow the change. Nothing was altered.' });
+      return;
+    }
+    resolve({ ok: true, firewall: await firewall.check({ execPath: process.execPath }) });
+  });
+}));
+
+// A fresh code every time the panel is opened, which is also how you cancel one
+// you did not mean to put on the screen.
+ipcMain.handle('remote:code', () => devices.newCode());
+ipcMain.handle('remote:cancelCode', () => { devices.clearCode(); return null; });
+ipcMain.handle('remote:forget', (_event, { id }) => {
+  devices.forget(id);
+  return devices.list();
 });

@@ -1,0 +1,519 @@
+/* Hangar on a phone.
+
+   Same palette as the desktop app, because it is the same app — a terminal
+   that is a different colour on the phone reads as a different terminal. What
+   changes is everything about the touch target: rows are 48px because a
+   fingertip is not a mouse pointer, and nothing important sits within a
+   thumb's width of the very bottom edge, where the system gesture bar is. */
+
+:root {
+  --bg: #12141a;
+  --bar: #0d0f14;
+  --side: #0a0c11;
+  --tab: #1a1d25;
+  --line: #262a35;
+  --text: #c9d1d9;
+  --dim: #6e7681;
+  --faint: #4a5058;
+  --accent: #4d9cf6;
+
+  --st-planning: #f4675f;
+  --st-implementing: #e8913a;
+  --st-testing: #d8c342;
+  --st-ready: #4fb45c;
+
+  /* The notch at the top and the gesture bar at the bottom. */
+  --top: env(safe-area-inset-top, 0px);
+  --bottom: env(safe-area-inset-bottom, 0px);
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.4 system-ui, "Segoe UI", Roboto, sans-serif;
+  -webkit-user-select: none;
+  user-select: none;
+  overscroll-behavior: none;
+}
+
+input, textarea { -webkit-user-select: text; user-select: text; }
+
+.screen {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  padding-top: var(--top);
+  padding-bottom: calc(56px + var(--bottom));
+}
+
+.screen[hidden] { display: none; }
+
+/* The terminal is a screen over the app rather than one of the three tabs, so
+   it keeps the space the bottom bar would have taken. */
+.screen.term { padding-bottom: var(--bottom); }
+
+/* ------------------------------------------------------------------- bar */
+
+.bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 52px;
+  padding: 0 12px;
+  background: var(--bar);
+  border-bottom: 1px solid var(--line);
+}
+
+.bar-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 17px;
+}
+
+.bar-sub {
+  flex: 0 0 auto;
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.bar-sub.warn { color: var(--st-implementing); }
+
+.bar-btn {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--dim);
+  font-size: 22px;
+  line-height: 1;
+}
+
+.bar-btn:active { background: var(--tab); color: var(--text); }
+
+/* ------------------------------------------------------------------ list */
+
+.list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.row:active { background: var(--tab); }
+.row.nested { padding-left: 34px; background: #0f1117; }
+
+.row-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-sub, .row-count { flex: 0 0 auto; color: var(--faint); font-size: 12px; }
+
+.row-add, .row-x {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--dim);
+  font-size: 20px;
+}
+
+.row-add:active, .row-x:active { background: var(--line); color: var(--text); }
+
+.empty { padding: 28px 18px; color: var(--faint); text-align: center; }
+
+/* The coloured dot, which means exactly what it means on the desktop. */
+.dot {
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--faint);
+}
+
+.state-planning .dot, .dot.state-planning { background: var(--st-planning); }
+.state-implementing .dot, .dot.state-implementing { background: var(--st-implementing); }
+.state-testing .dot, .dot.state-testing { background: var(--st-testing); }
+.state-ready .dot, .dot.state-ready { background: var(--st-ready); }
+
+.project-row .row-name { color: var(--text); }
+.term-row .row-name { color: var(--dim); font-size: 14px; }
+
+/* --------------------------------------------------------------- connect */
+
+.connect { padding-bottom: var(--bottom); justify-content: center; }
+
+.connect-inner {
+  overflow-y: auto;
+  padding: 24px 20px calc(24px + var(--bottom));
+}
+
+.brand {
+  margin-bottom: 6px;
+  color: var(--text);
+  font-size: 30px;
+  letter-spacing: 1px;
+}
+
+.connect-state { margin: 0 0 22px; color: var(--dim); font-size: 14px; }
+
+.field { margin-bottom: 16px; }
+
+.field label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--faint);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.field input {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #191c23;
+  color: var(--text);
+  font: inherit;
+  outline: none;
+}
+
+.field input:focus { border-color: var(--accent); }
+
+/* Typed once, from across a room, in capitals. */
+#code {
+  font-size: 26px;
+  letter-spacing: 8px;
+  text-align: center;
+}
+
+.hint { margin: 6px 0 0; color: var(--faint); font-size: 12px; }
+.error { margin: 4px 0; color: var(--st-planning); font-size: 13px; min-height: 1em; }
+
+.connect-actions { display: flex; gap: 10px; margin-top: 8px; }
+
+.found { margin-bottom: 16px; }
+
+.found-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px;
+  margin-bottom: 8px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: #161b24;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+}
+
+.found-name { flex: 1 1 auto; }
+.found-addr { color: var(--faint); font-size: 12px; }
+
+/* --------------------------------------------------------------- buttons */
+
+.btn {
+  flex: 1 1 auto;
+  padding: 13px 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #191c23;
+  color: var(--text);
+  font: inherit;
+}
+
+.btn:active { background: var(--tab); }
+.btn.primary { border-color: var(--accent); background: var(--accent); color: #0b1017; }
+.btn.small { flex: 0 0 auto; width: 44px; padding: 8px 0; text-align: center; }
+.btn.wide { width: 100%; margin: 18px 0; }
+.btn.danger { border-color: var(--st-planning); color: var(--st-planning); }
+.btn:disabled { opacity: 0.5; }
+
+/* -------------------------------------------------------------- terminal */
+
+.term-bar { gap: 8px; }
+
+.term-host {
+  flex: 1 1 auto;
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.term-pane { position: absolute; inset: 0; }
+.term-pane[hidden] { display: none; }
+
+/* The keys the phone keyboard does not have. Scrolls sideways rather than
+   wrapping, so the row stays one row however many keys end up on it. */
+.keybar {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 6px;
+  padding: 8px 10px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  background: var(--bar);
+  border-top: 1px solid var(--line);
+}
+
+.keybar::-webkit-scrollbar { display: none; }
+
+.keybar button {
+  flex: 0 0 auto;
+  min-width: 46px;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #191c23;
+  color: var(--text);
+  font: 14px/1 ui-monospace, monospace;
+}
+
+.keybar button:active { background: var(--accent); color: #0b1017; }
+
+/* No safe-area inset here: the screen this sits in already holds that space
+   back, and counting the gesture bar twice took a row off the terminal for
+   nothing. */
+.compose {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--bar);
+  border-top: 1px solid var(--line);
+}
+
+.compose[hidden] { display: none; }
+
+.compose textarea {
+  flex: 1 1 auto;
+  max-height: 120px;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: #191c23;
+  color: var(--text);
+  font: inherit;
+  resize: none;
+  outline: none;
+}
+
+.compose textarea:focus { border-color: var(--accent); }
+
+.send {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #0b1017;
+  font-size: 18px;
+}
+
+.send:active { opacity: 0.7; }
+
+/* --------------------------------------------------------------- settings */
+
+.settings-list { padding: 8px 0; }
+
+.setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.setting.toggle { align-items: flex-start; }
+.setting-name { display: block; color: var(--text); }
+.setting-value { color: var(--dim); font-size: 13px; text-align: right; }
+
+.setting-help {
+  display: block;
+  margin-top: 4px;
+  color: var(--faint);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.setting input[type="checkbox"] {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  margin-top: 2px;
+  accent-color: var(--accent);
+}
+
+.stepper { display: flex; align-items: center; gap: 10px; }
+.stepper-value { min-width: 46px; color: var(--dim); text-align: center; }
+
+/* ------------------------------------------------------------------ usage */
+
+.usage {
+  flex: 0 0 auto;
+  padding: 10px 14px;
+  background: var(--side);
+  border-top: 1px solid var(--line);
+}
+
+.usage[hidden] { display: none; }
+
+.usage-row { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
+.usage-name { width: 20px; color: var(--faint); font-size: 11px; }
+.usage-pct { width: 34px; color: var(--faint); font-size: 11px; text-align: right; }
+
+.usage-track {
+  flex: 1 1 auto;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.usage-fill { display: block; height: 100%; background: var(--accent); }
+.usage-fill.warn { background: var(--st-implementing); }
+.usage-fill.hot { background: var(--st-planning); }
+.usage-note { color: var(--faint); font-size: 11px; }
+
+/* ----------------------------------------------------------------- sheets */
+
+.sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: flex-end;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.sheet[hidden] { display: none; }
+
+.sheet-card {
+  width: 100%;
+  padding: 8px 10px calc(10px + var(--bottom));
+  background: var(--bar);
+  border-top: 1px solid var(--line);
+  border-radius: 14px 14px 0 0;
+}
+
+.sheet-title { padding: 10px 12px; color: var(--faint); font-size: 13px; }
+
+.sheet-item {
+  display: block;
+  width: 100%;
+  padding: 15px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+}
+
+.sheet-item:active { background: var(--tab); }
+.sheet-item.cancel { margin-top: 6px; color: var(--dim); text-align: center; }
+
+.prompt-card { border-radius: 14px; margin: auto 12px; padding: 16px; }
+.prompt-title { margin-bottom: 12px; font-size: 17px; }
+
+.prompt-card input {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #191c23;
+  color: var(--text);
+  font: inherit;
+  outline: none;
+}
+
+.prompt-actions { display: flex; gap: 10px; margin-top: 14px; }
+
+/* Centred rather than bottom-anchored, since it shares the screen with a
+   keyboard more often than not. */
+#prompt { align-items: center; }
+
+/* ------------------------------------------------------------------ toast */
+
+.toast {
+  position: fixed;
+  left: 16px;
+  right: 16px;
+  bottom: calc(72px + var(--bottom));
+  z-index: 30;
+  padding: 13px 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #1d2129;
+  color: var(--text);
+  font-size: 14px;
+  text-align: center;
+}
+
+.toast[hidden] { display: none; }
+
+/* -------------------------------------------------------------- bottom bar */
+
+.nav {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 10;
+  display: flex;
+  padding-bottom: var(--bottom);
+  background: var(--bar);
+  border-top: 1px solid var(--line);
+}
+
+.nav[hidden] { display: none; }
+
+.nav-btn {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  height: 56px;
+  padding: 8px 0;
+  border: 0;
+  background: none;
+  color: var(--faint);
+  font: 11px/1 system-ui, sans-serif;
+}
+
+.nav-btn.on { color: var(--accent); }
+.nav-icon { font-size: 17px; line-height: 1; }

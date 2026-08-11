@@ -35,6 +35,16 @@
       <button id="sideexpand" class="icon" title="Show projects (Ctrl+Shift+E)">&#187;</button>
       <div id="tablist" class="tablist"></div>
       <button id="newtab" class="newtab" title="New terminal (Ctrl+Shift+T)">+</button>
+      <!-- The same cog again, because the one in the sidebar goes away with the
+           sidebar and settings must not be reachable only from a panel you can
+           hide. Never both on screen at once: the tab strip and the sidebar
+           swap places. -->
+      <button id="opensettings2" class="icon cog" title="Settings" aria-label="Settings">
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+          <path fill="currentColor" d="M8 5.2a2.8 2.8 0 1 0 0 5.6 2.8 2.8 0 0 0 0-5.6Zm0 1.4a1.4 1.4 0 1 1 0 2.8 1.4 1.4 0 0 1 0-2.8Z"/>
+          <path fill="currentColor" d="m9.05.9.3 1.62c.3.11.58.26.84.43l1.55-.56a.7.7 0 0 1 .84.3l1.05 1.82a.7.7 0 0 1-.14.88l-1.25 1.06c.02.16.03.33.03.5s-.01.34-.03.5l1.25 1.06a.7.7 0 0 1 .14.88l-1.05 1.82a.7.7 0 0 1-.84.3l-1.55-.56c-.26.17-.54.32-.84.43l-.3 1.62a.7.7 0 0 1-.69.58H6.64a.7.7 0 0 1-.69-.58l-.3-1.62a5.3 5.3 0 0 1-.84-.43l-1.55.56a.7.7 0 0 1-.84-.3L1.37 9.19a.7.7 0 0 1 .14-.88l1.25-1.06A5.4 5.4 0 0 1 2.73 6.75c0-.17.01-.34.03-.5L1.51 5.19a.7.7 0 0 1-.14-.88l1.05-1.82a.7.7 0 0 1 .84-.3l1.55.56c.26-.17.54-.32.84-.43l.3-1.62A.7.7 0 0 1 6.64.12h2.72a.7.7 0 0 1 .69.58Z" opacity=".28"/>
+        </svg>
+      </button>
     </div>
 
     <div id="find" class="find" hidden>
@@ -78,7 +88,18 @@
       sidebar.
     </p>
 
-    <div class="setup-field">
+    <!-- Two questions on a first run, four groups afterwards. The strip is
+         hidden until the app has been set up once: nobody wants a settings
+         panel before they have used the thing. -->
+    <div id="setuptabs" class="setup-tabs" hidden role="tablist">
+      <button class="setup-tab" data-panel="projects" role="tab">Projects</button>
+      <button class="setup-tab" data-panel="backups" role="tab">Backups</button>
+      <button class="setup-tab" data-panel="phone" role="tab">Phone</button>
+      <button class="setup-tab" data-panel="startup" role="tab">Startup</button>
+    </div>
+
+    <div class="setup-body">
+    <div class="setup-field" data-panel="projects">
       <label class="setup-label" for="setupprojects">Where your projects live</label>
       <p class="setup-help">
         Hangar lists the folders inside this one as your projects. Pick the folder your
@@ -92,7 +113,7 @@
       <div id="setupprojectserror" class="modal-error"></div>
     </div>
 
-    <div class="setup-field">
+    <div class="setup-field" data-panel="backups">
       <label class="setup-check">
         <input id="setupbackup" type="checkbox" />
         <span>Keep a backup copy of my projects</span>
@@ -117,6 +138,98 @@
           nothing else.
         </p>
       </div>
+    </div>
+
+    <!-- Phone ---------------------------------------------------------- -->
+    <div class="setup-field" data-panel="phone">
+      <label class="setup-check">
+        <input id="setupremote" type="checkbox" />
+        <span>Let my phone connect to Hangar</span>
+      </label>
+      <p class="setup-help">
+        Hangar listens on your home network so the Hangar app on your phone can see the same
+        projects and the same terminals. Nothing leaves the house — the phone talks straight
+        to this PC over the router, and there is no account and no cloud anywhere in it.
+      </p>
+
+      <div id="setupremotebox" class="setup-sub">
+        <div class="setup-row">
+          <label class="setup-inline" for="setupremoteport">Port</label>
+          <input id="setupremoteport" class="setup-input narrow" type="text" spellcheck="false"
+                 autocomplete="off" inputmode="numeric" />
+          <span id="remotestate" class="setup-inline dim"></span>
+        </div>
+        <div id="setupremoteerror" class="modal-error"></div>
+
+        <!-- The failure that looks like no failure: everything here correct, the
+             port listening, and Windows quietly dropping every packet. -->
+        <div id="firewallwarn" class="firewall-warn" hidden>
+          <div id="firewallhead" class="firewall-head"></div>
+          <p id="firewalltext" class="firewall-text"></p>
+          <div class="firewall-actions">
+            <button id="firewallfix" class="modal-btn primary">Let my phone through</button>
+            <span id="firewallnote" class="setup-inline dim"></span>
+          </div>
+        </div>
+
+        <p class="setup-help">
+          On the phone, Hangar finds this PC by itself. If it cannot, type one of these in
+          by hand:
+        </p>
+        <div id="remoteaddresses" class="remote-addresses"></div>
+
+        <div class="remote-pair">
+          <div class="remote-pair-head">
+            <span>Pair a phone</span>
+            <button id="remotepair" class="modal-btn">Show a code</button>
+          </div>
+          <div id="remotecode" class="remote-code" hidden>
+            <span id="remotecodevalue" class="remote-code-value"></span>
+            <span id="remotecodenote" class="remote-code-note"></span>
+          </div>
+          <p class="setup-help">
+            Type the code into the phone once. It lasts five minutes and one use; after that
+            the phone keeps a key of its own and never needs a code again.
+          </p>
+        </div>
+
+        <div class="remote-devices">
+          <div class="remote-devices-head">Phones that can connect</div>
+          <div id="remotedevices" class="remote-device-list"></div>
+        </div>
+
+        <p class="setup-warn">
+          A paired phone can open terminals on this PC and type into them, which is the same
+          as sitting here. Only pair phones you own, and remove any you no longer use.
+        </p>
+      </div>
+    </div>
+
+    <!-- Startup -------------------------------------------------------- -->
+    <div class="setup-field" data-panel="startup">
+      <label class="setup-check">
+        <input id="setupautostart" type="checkbox" />
+        <span>Start Hangar when Windows starts</span>
+      </label>
+      <p class="setup-help">
+        Puts Hangar in the ordinary startup list — the one the Startup tab of Task Manager
+        shows. No service, nothing elevated, and unticking this takes it straight back out.
+        Worth having on if you want your phone to be able to reach Hangar without walking
+        over to the PC first.
+      </p>
+
+      <label class="setup-check">
+        <input id="setupminimised" type="checkbox" />
+        <span>Start minimised to the tray</span>
+      </label>
+      <p class="setup-help">
+        Hangar comes up with no window at all, just an icon by the clock — so the terminals
+        and the phone connection are there without a window jumping in front of whatever you
+        were doing. Click the icon for the window back. With this on, closing the window
+        hides it instead of quitting, so nothing you had running is lost; Quit from the tray
+        menu ends Hangar properly.
+      </p>
+    </div>
     </div>
 
     <div id="setupenvnote" class="setup-note" hidden></div>

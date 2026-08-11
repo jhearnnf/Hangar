@@ -30,12 +30,11 @@ let fontSize = Number(localStorage.getItem('fontSize')) || 14;
 
 const DEFAULT_COMMAND = 'claude';
 
-// Silence for this long means the terminal has finished whatever it was doing.
-// Claude's TUI animates continuously while working, so it never goes quiet
-// mid-task.
+// Silence for this long means a terminal has finished whatever it was doing —
+// which is now decided in the main process, since the phone has to agree with
+// this window about it. Named here because the backup countdown below is
+// explained in terms of it.
 const IDLE_MS = 3000;
-const CLASSIFY_MS = 150;
-const RECENT_CHARS = 4000;
 
 // Pause the pty once this many bytes are queued but unpainted, resume when the
 // backlog drains, so a burst of output can never overrun the buffer.
@@ -480,7 +479,6 @@ function setTitle(tab, title) {
  */
 function reportFailure(tab, message) {
   tab.failed = true;
-  tab.namedBySession = true;          // nothing is coming to name it now
   setTitle(tab, 'failed');
   setState(tab, 'ready');
 
@@ -658,10 +656,110 @@ async function newTerminal(project, command = DEFAULT_COMMAND) {
   }
 }
 
-async function createTab(project, command) {
-  const id = 'tab-' + (++idSeq);
+/**
+ * Take over a terminal this window did not open.
+ *
+ * There are two ways one turns up: it was already running when the window was
+ * built — the terminals outlive the window now — or a phone just started it.
+ * Either way the pty, the name, the stage and the history are all over in the
+ * main process already, so this builds the pane around them and replays what
+ * was printed before we were looking.
+ */
+async function adoptSession(summary) {
+  if (tabs.has(summary.id)) return tabs.get(summary.id);
 
+  const tab = buildTab({
+    id: summary.id,
+    projectPath: summary.projectPath,
+    projectName: summary.projectName || lastSegment(summary.projectPath),
+    title: summary.title,
+    state: summary.state,
+  });
+  // Very often a phone's: this is the path a terminal opened on the phone
+  // arrives by, and the window has to know it does not own the width yet.
+  tab.sizeOwner = summary.sizeOwner;
+
+  wireLiveTab(tab);
+
+  // Only if there is nothing to interrupt. A terminal opened on the phone
+  // appearing in the sidebar is welcome; it yanking the pane out from under
+  // whatever is being read at the desk is not.
+  const showing = !activeId;
+  if (showing) activate(tab.id);
+
+  updateEmpty();
+  renderSidebar();
+
+  // Same measurement problem as a terminal opened here, with the same answer —
+  // except that an adopted one only gets to claim the width if it is the pane
+  // on screen. A terminal running quietly behind another must not reflow the
+  // shell to a pane nobody is looking at.
+  if (showing) {
+    await laidOut();
+    refit(tab);
+  }
+
+  await hydrate(tab);
+  return tab;
+}
+
+function lastSegment(p) {
+  const parts = String(p || '').split(/[\\/]+/).filter(Boolean);
+  return parts[parts.length - 1] || p || 'project';
+}
+
+/**
+ * Fill a freshly built pane with what the terminal printed before it had one.
+ *
+ * Output does not stop while this is being asked for, so anything that lands
+ * in between is held rather than written — and then written from exactly where
+ * the history left off. Without that the first screenful of an adopted
+ * terminal is the same few hundred characters twice.
+ */
+async function hydrate(tab) {
+  tab.hydrating = [];
+  let past;
+  try {
+    past = await api.history(tab.id, 0);
+  } catch {
+    past = null;
+  }
+
+  if (past && past.data) tab.term.write(past.data);
+  tab.seq = past ? past.seq : 0;
+
+  const held = tab.hydrating;
+  tab.hydrating = null;
+  for (const chunk of held) writeChunk(tab, chunk);
+}
+
+/**
+ * Write a chunk that carries the sequence number it ends at, skipping whatever
+ * of it the tab has already seen.
+ */
+function writeChunk(tab, { seq, data }, done) {
+  if (typeof seq !== 'number') { tab.term.write(data, done); return; }
+
+  // Already covered by the history replay: count it as seen and write nothing.
+  if (seq <= tab.seq) {
+    tab.seq = Math.max(tab.seq, seq);
+    if (done) done();
+    return;
+  }
+
+  const start = seq - data.length;
+  const text = start >= tab.seq ? data : data.slice(tab.seq - start);
+  tab.seq = seq;
+  tab.term.write(text, done);
+}
+
+/** Everything a pane needs that does not depend on how the terminal started. */
+function buildTab({ id, projectPath, projectName, title, state }) {
   const pane = document.createElement('div');
+  // Hidden until something activates it. A terminal the phone opened builds a
+  // pane over here too, and an unhidden one would land on top of whatever is
+  // being read without anything having asked it to.
+  pane.hidden = true;
   pane.className = 'pane';
   panes.appendChild(pane);
 
@@ -711,65 +809,46 @@ async function createTab(project, command) {
   const tab = {
     id, term, fit, search, el, pane,
     row: null,
-    projectPath: project.path,
-    projectName: project.name,
-    title: command || 'shell',
-    namedBySession: false,
-    state: 'ready',
-    recent: '',
+    projectPath,
+    projectName,
+    title: title || 'shell',
+    // The name and the coloured dot are worked out in the main process now, so
+    // the sidebar here and the list on a phone cannot end up calling one
+    // terminal two different things. Both arrive as session events.
+    state: state || 'ready',
+    // How far through this terminal's output the pane has got — which is what
+    // lets a terminal that was already running be caught up on without
+    // printing the join twice.
+    seq: 0,
+    hydrating: null,
     pending: 0,
     paused: false,
-    dirty: false,
-    idleTimer: null,
-    classifyTimer: null,
   };
-
-  // Claude Code names its own session — the summary it shows in the header goes
-  // out as the terminal title too, and ConPTY turns that into an OSC sequence
-  // xterm parses for us. A program describing itself beats anything we can
-  // infer, so the first real title takes the tab over for good.
-  term.onTitleChange((raw) => {
-    const name = Classify.nameFromTitle(raw);
-    if (!name) return;
-    tab.namedBySession = true;
-    setTitle(tab, name);
-  });
-
-  // Until then — a plain shell, or claude before it has summarised anything —
-  // guess from what the user asked for. Their keystrokes are a cleaner source
-  // than the redrawn TUI.
-  tab.capture = Classify.createInputCapture((line) => {
-    if (!tab.namedBySession) setTitle(tab, Classify.nameFromPrompt(line) || tab.title);
-    setState(tab, 'planning');
-  });
 
   tabs.set(id, tab);
   order.push(id);
 
   el.addEventListener('mousedown', (e) => {
-    if (e.button === 1) { e.preventDefault(); closeTab(id); return; }
+    if (e.button === 1) { e.preventDefault(); closeTab(tab.id); return; }
     if (e.target.classList.contains('close')) return;
-    activate(id);
+    activate(tab.id);
   });
   el.querySelector('.close').addEventListener('click', (e) => {
     e.stopPropagation();
-    closeTab(id);
+    closeTab(tab.id);
   });
 
-  activate(id);
-  updateEmpty();
   fit.fit();
+  return tab;
+}
 
-  try {
-    await api.create({ id, cwd: project.path, command, cols: term.cols, rows: term.rows });
-  } catch (err) {
-    reportFailure(tab, err && err.message ? err.message : String(err));
-    return tab;
-  }
+/** The keyboard and the size, for a tab whose terminal is actually running. */
+function wireLiveTab(tab) {
+  const term = tab.term;
   tab.startedAt = Date.now();
 
   term.onData((data) => sendInput(tab, data));
-  term.onResize(({ cols, rows }) => api.resize(id, cols, rows));
+  term.onResize(({ cols, rows }) => api.resize(tab.id, cols, rows));
 
   // Shift+Enter opens a new line instead of submitting. A terminal sends a bare
   // CR for both, so nothing on the far end can tell them apart; ESC+CR is the
@@ -788,8 +867,75 @@ async function createTab(project, command) {
   return tab;
 }
 
+async function createTab(project, command) {
+  // The pane is built first because a pty needs a size and the only honest
+  // source of one is a terminal that has been laid out. It is keyed on a
+  // placeholder until the main process says what the terminal is called: ids
+  // belong to the side that keeps the list, now that two screens can both ask
+  // for a terminal at the same moment.
+  const tab = buildTab({
+    id: 'pending-' + (++idSeq),
+    projectPath: project.path,
+    projectName: project.name,
+    title: command || 'shell',
+    state: 'ready',
+  });
+
+  activate(tab.id);
+  updateEmpty();
+
+  // A pane that has not been laid out has no size, and a terminal measured
+  // while it is still hidden reports the 80x24 it was constructed with. That
+  // number used to go straight to the pty, which then painted into the top-left
+  // corner of a much larger pane — and stayed that way, because the handler
+  // that reports later resizes is not attached until the pty exists. The first
+  // window resize would fix it, which is a strange thing to have to do to every
+  // new terminal. So: let the pane lay out, measure it, and start the shell at
+  // the size it is actually going to be.
+  await laidOut();
+  refit(tab);
+
+  let session;
+  try {
+    session = await api.create({
+      cwd: project.path,
+      projectName: project.name,
+      command,
+      cols: tab.term.cols,
+      rows: tab.term.rows,
+    });
+  } catch (err) {
+    reportFailure(tab, err && err.message ? err.message : String(err));
+    return tab;
+  }
+
+  rekey(tab, session.id);
+  tab.sizeOwner = session.sizeOwner;
+  wireLiveTab(tab);
+
+  // Anything that moved between the measurement above and the pty existing —
+  // the sidebar being redrawn underneath it, a font still settling — is caught
+  // here rather than waiting for the user to resize something.
+  refit(tab);
+  api.resize(tab.id, tab.term.cols, tab.term.rows);
+  return tab;
+}
+
+/** The next frame, by which time the browser has laid out what was just added. */
+function laidOut() {
+  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+}
+
+/** Move a tab off its placeholder onto the id the main process gave it. */
+function rekey(tab, id) {
+  tabs.delete(tab.id);
+  order = order.map((x) => (x === tab.id ? id : x));
+  if (activeId === tab.id) activeId = id;
+  tab.id = id;
+  tabs.set(id, tab);
+}
+
 function sendInput(tab, data) {
-  tab.capture(data);
   api.write(tab.id, data);
 }
 
@@ -806,14 +952,27 @@ function activate(id) {
 
   // A hidden pane has no size, so it can only be measured once visible.
   requestAnimationFrame(() => {
-    refit(tab);
+    refit(tab, { force: true });
     tab.term.focus();
   });
 }
 
-function refit(tab) {
+/**
+ * Fit a pane's terminal to the space it has.
+ *
+ * `force` also takes the width back from a phone that had reflowed this
+ * terminal to its own screen. Only where sitting down at the window is the
+ * point — activating a tab, bringing the window forward — because a phone
+ * being used in another room should not have the terminal snatched out from
+ * under it by a window nobody is looking at.
+ */
+function refit(tab, { force = false } = {}) {
   if (!tab || tab.pane.hidden) return;
   try { tab.fit.fit(); } catch { /* pane not laid out yet */ }
+
+  if (!force || !tab.sizeOwner || tab.sizeOwner === 'desktop') return;
+  tab.sizeOwner = 'desktop';
+  api.claim(tab.id, tab.term.cols, tab.term.rows);
 }
 
 function closeTab(id) {
@@ -853,55 +1012,104 @@ function activeProject() {
 
 // ---------------------------------------------------------------- pty wiring
 
-api.onData(({ id, data }) => {
-  const tab = tabs.get(id);
+api.onData((chunk) => {
+  const tab = tabs.get(chunk.id);
   if (!tab) return;
 
+  // Mid-adoption: this window is still waiting to be told what was printed
+  // before it had a pane. Holding the chunk rather than writing it keeps the
+  // two in order, and `hydrate` writes them once it knows where history ended.
+  if (tab.hydrating) {
+    tab.hydrating.push(chunk);
+    noteOutput(tab, chunk.data);
+    return;
+  }
+
+  const { data } = chunk;
   tab.pending += data.length;
   if (!tab.paused && tab.pending > HIGH_WATER) {
     tab.paused = true;
-    api.flow(id, true);
+    api.flow(tab.id, true);
   }
 
-  tab.term.write(data, () => {
+  writeChunk(tab, chunk, () => {
     tab.pending -= data.length;
     if (tab.paused && tab.pending < LOW_WATER) {
       tab.paused = false;
-      api.flow(id, false);
+      api.flow(tab.id, false);
     }
   });
 
   noteOutput(tab, data);
 });
 
-function noteOutput(tab, data) {
-  tab.recent = (tab.recent + Classify.stripAnsi(data)).slice(-RECENT_CHARS);
-  tab.dirty = true;
-
-  // Output is the only reliable sign the project's files may have moved under
-  // us. A terminal that never leaves 'ready' — a short command, a stage the
-  // classifier does not recognise — would otherwise never queue a backup.
+/**
+ * What this window still does per chunk, now that naming and the stage dot are
+ * the main process's job: notice that a project's files may have moved.
+ *
+ * Output is the only reliable sign of that. A terminal that never leaves
+ * 'ready' — a short command, a stage the classifier does not recognise — would
+ * otherwise never queue a backup.
+ */
+function noteOutput(tab) {
   noteProjectWrite(tab.projectPath);
+}
 
-  clearTimeout(tab.idleTimer);
-  tab.idleTimer = setTimeout(() => {
-    setState(tab, 'ready');
-    // setState is a no-op when the terminal was already resting, so the backup
-    // countdown is armed here rather than left to a stage change that may
-    // never come.
-    paintProject(tab.projectPath);
-  }, IDLE_MS);
+/**
+ * A terminal appeared, was renamed, changed stage, or went.
+ *
+ * All four used to be worked out here from the bytes. They are worked out once
+ * in the main process now and broadcast to everything looking, which is what
+ * makes a terminal a phone opened show up in this sidebar with the right name
+ * and the right colour on it without this file knowing phones exist.
+ */
+api.onSession(({ kind, session }) => {
+  const tab = tabs.get(session.id);
 
-  // Throttled: the regex sweep is cheap but output arrives many times a second.
-  if (!tab.classifyTimer) {
-    tab.classifyTimer = setTimeout(() => {
-      tab.classifyTimer = null;
-      if (!tab.dirty) return;
-      tab.dirty = false;
-      const state = Classify.classify(tab.recent);
-      if (state) setState(tab, state);
-    }, CLASSIFY_MS);
+  if (kind === 'created') {
+    // A terminal this window asked for arrives twice: once as this broadcast,
+    // which can land before the call that asked for it has even returned, and
+    // once as that call's answer. The answer is the one that owns the pane
+    // that was already built for it, so the broadcast is ignored — otherwise
+    // one click on `+` leaves two tabs behind for one shell.
+    if (session.origin === 'desktop') return;
+    if (!tab) adoptSession(session);
+    return;
   }
+
+  if (!tab) return;
+
+  if (kind === 'updated') {
+    setTitle(tab, session.title);
+    setState(tab, session.state);
+
+    // A phone let go of the width — it disconnected, or handed it back. It
+    // returns the size it was using rather than one that fits here, so the
+    // window has to say how big it actually is or go on painting into a
+    // phone-shaped corner of itself.
+    const wasOwned = tab.sizeOwner && tab.sizeOwner !== 'desktop';
+    tab.sizeOwner = session.sizeOwner;
+    if (wasOwned && session.sizeOwner === 'desktop' && tab.id === activeId) refit(tab, { force: true });
+    return;
+  }
+
+  // 'closed' is handled by the exit event, which knows the difference between
+  // a shell someone quit and one that never started.
+});
+
+// A terminal has gone quiet. Usually that is not a change of stage — it was
+// already green — so it arrives separately from the stage events, and it is
+// the moment the backup countdown can start.
+api.onIdle(({ projectPath }) => paintProject(projectPath));
+
+api.onProjectsChanged(() => refreshProjects());
+
+async function refreshProjects() {
+  const { projects: found, root, ignored } = await api.listProjects();
+  projects = found;
+  projectsRoot = root || '';
+  ignoredNames = ignored || [];
+  renderSidebar();
 }
 
 // Closing the tab is right for a shell you exited out of, and wrong for one
@@ -1086,6 +1294,10 @@ window.addEventListener('focus', () => {
   else if (modalOpen()) modalName.focus();
   else if (tab && findBar.hidden) tab.term.focus();
 
+  // Coming back to the window is someone sitting down at it, which is the
+  // moment a terminal a phone had reflowed should go back to full width.
+  refit(tab, { force: true });
+
   // Coming back after a while away is exactly when the bars are most likely to
   // be out of date. Cheap: the main process still decides when to really poll.
   refreshUsage();
@@ -1196,6 +1408,19 @@ async function refreshUsage() {
 const setup = $('setup');
 const setupTitle = $('setuptitle');
 const setupIntro = $('setupintro');
+const setupTabs = $('setuptabs');
+const setupRemote = $('setupremote');
+const setupRemoteBox = $('setupremotebox');
+const setupRemotePort = $('setupremoteport');
+const setupRemoteError = $('setupremoteerror');
+const setupAutoStart = $('setupautostart');
+const setupMinimised = $('setupminimised');
+const remoteState = $('remotestate');
+const remoteAddresses = $('remoteaddresses');
+const remoteCode = $('remotecode');
+const remoteCodeValue = $('remotecodevalue');
+const remoteCodeNote = $('remotecodenote');
+const remoteDevices = $('remotedevices');
 const setupProjects = $('setupprojects');
 const setupProjectsError = $('setupprojectserror');
 const setupBackup = $('setupbackup');
@@ -1220,6 +1445,282 @@ function paintBackupBox() {
   setupBackupRoot.disabled = !setupBackup.checked;
 }
 
+function paintRemoteBox() {
+  setupRemoteBox.classList.toggle('off', !setupRemote.checked);
+  setupRemotePort.disabled = !setupRemote.checked || envLocked.remotePort;
+  $('remotepair').disabled = !setupRemote.checked;
+}
+
+// --------------------------------------------------------- the four groups
+
+const PANELS = ['projects', 'backups', 'phone', 'startup'];
+let panel = 'projects';
+
+function showPanel(name, { firstRun = false } = {}) {
+  panel = PANELS.includes(name) ? name : 'projects';
+
+  for (const field of document.querySelectorAll('.setup-field[data-panel]')) {
+    // A first run has no strip and asks its two questions together — the two
+    // that have to be answered before anything else means anything.
+    field.hidden = firstRun
+      ? !['projects', 'backups'].includes(field.dataset.panel)
+      : field.dataset.panel !== panel;
+  }
+
+  for (const tab of setupTabs.querySelectorAll('.setup-tab')) {
+    tab.classList.toggle('on', tab.dataset.panel === panel);
+    tab.setAttribute('aria-selected', tab.dataset.panel === panel ? 'true' : 'false');
+  }
+
+  // Only worth asking about while the tab that shows it is on screen.
+  if (panel === 'phone') refreshRemote();
+}
+
+for (const tab of document.querySelectorAll('.setup-tab')) {
+  tab.addEventListener('click', () => showPanel(tab.dataset.panel));
+}
+
+// ---------------------------------------------------------- phone access
+
+// What is on screen is a listening port and a device list, both of which can
+// change without anybody touching this card — a phone connects, the server
+// comes up on Save — so the panel is repainted from the main process rather
+// than from what the fields say.
+let envLocked = { projectsRoot: false, backupRoot: false, remotePort: false };
+let codeTimer = null;
+
+function relative(ms) {
+  if (!ms) return '';
+  const mins = Math.round((Date.now() - ms) / 60_000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+
+async function refreshRemote() {
+  let status;
+  try {
+    status = await api.remote.status();
+  } catch {
+    return;
+  }
+
+  if (status.error) {
+    remoteState.textContent = '';
+    setupRemoteError.textContent = status.error;
+  } else {
+    setupRemoteError.textContent = '';
+    remoteState.textContent = status.running
+      ? `listening — phones can connect`
+      : (status.enabled ? 'starting…' : 'off — tick the box and Save');
+  }
+
+  remoteAddresses.textContent = '';
+  for (const addr of status.addresses || []) {
+    const chip = document.createElement('span');
+    // A VPN or mesh address works only from a phone on the same mesh, and from
+    // any other phone it fails by going quiet rather than by saying no — which
+    // is indistinguishable from a firewall, from the wrong wifi, and from the
+    // PC being off. Two addresses in a row with nothing to choose between them
+    // is a coin flip nobody knows they are making, so the odd one says so.
+    const overlay = addr.kind === 'overlay';
+    chip.className = 'remote-address' + (overlay ? ' overlay' : '');
+    chip.textContent = `${addr.address}:${status.port}`;
+    chip.title = overlay
+      ? `${addr.name} — a VPN address. Only works from a phone on the same VPN; use it away from home.`
+      : `${addr.name} — this network. Use this one.`;
+
+    if (overlay) {
+      const tag = document.createElement('span');
+      tag.className = 'remote-address-tag';
+      tag.textContent = 'VPN';
+      chip.appendChild(tag);
+    }
+    remoteAddresses.appendChild(chip);
+  }
+  if (!(status.addresses || []).length) {
+    const none = document.createElement('span');
+    none.className = 'remote-empty';
+    none.textContent = 'This PC does not appear to be on a network.';
+    remoteAddresses.appendChild(none);
+  }
+
+  paintFirewall(status.firewall, status.port, (status.devices || []).length);
+  paintDevices(status.devices || [], status.connected || []);
+  paintCode(status.code);
+}
+
+/**
+ * Say when Windows is dropping everything the phone sends.
+ *
+ * Only shown when the rules actually say Block. `known: false` means the check
+ * could not read them — a Windows that answers `netsh` in another language, or
+ * a platform that has no such thing — and a warning nobody can act on, on a
+ * machine that may well be fine, is worse than no warning.
+ */
+/**
+ * What the firewall has to say, and how loudly.
+ *
+ * There are two findings here and they deserve very different volumes. A Block
+ * rule naming Hangar is a mistake with a fix, and it is worth shouting about. A
+ * rule that blocks the whole local network is somebody's deliberate policy —
+ * worth stating, because it is invisible otherwise and it will be why the LAN
+ * route does not work, but it is not a fault and it is not always in the way:
+ * a phone reaching Hangar over a mesh VPN never touches it.
+ *
+ * So the second one goes quiet once a phone has actually been paired. Shouting
+ * "Windows Firewall is blocking this" at someone whose phone is connected and
+ * working teaches them to ignore the panel, and then it will not be believed on
+ * the day it is right.
+ */
+function paintFirewall(state, port, pairedCount) {
+  const box = $('firewallwarn');
+  const catchAll = (state && state.catchAll) || [];
+  box.hidden = !state || !state.known || (!state.blocked && !catchAll.length);
+  if (box.hidden) return;
+
+  const parts = [];
+  // Loud only when something is genuinely broken: a rule aimed at Hangar, or a
+  // blanket block on a machine that has never managed to pair a phone at all.
+  const loud = Boolean(state.blocked) || pairedCount === 0;
+
+  if (state.blocked) {
+    const where = (state.profiles || []).join(' and ') || 'this';
+    parts.push(
+      `There is a rule set to block Hangar on ${where} networks, so your phone's connection `
+      + 'is thrown away rather than refused — which is why it sits saying "connecting" and '
+      + 'never stops. Windows writes that rule when its "allow access" prompt is answered '
+      + 'with the box for this kind of network unticked, and it never asks again.',
+      'The button asks Windows for permission to replace it with one that allows just port '
+      + `${port} and the search Hangar answers, and only from other devices on this network.`,
+    );
+  }
+
+  // The rule that names no program, and so blocks Hangar without ever
+  // mentioning it. Windows lets a block beat any allowance beside it.
+  if (catchAll.length) {
+    const names = catchAll.map((name) => `"${name}"`).join(', ');
+    const subject = catchAll.length === 1 ? 'A rule' : 'Rules';
+
+    parts.push(loud
+      ? `${subject} named ${names} block everything arriving at this PC, without naming any `
+        + 'program. Windows lets a block beat any allowance beside it, so this stops the '
+        + 'phone however the rest of this panel is set — and because it never mentions '
+        + 'Hangar, nothing here would otherwise say so.'
+      : `${subject} named ${names} block everything arriving at this PC over the local `
+        + 'network. That is not a fault and Hangar has not touched it — it only means a '
+        + 'phone cannot reach the addresses above by being on the same wifi.');
+
+    parts.push(loud
+      ? 'Hangar will not touch that one: somebody wrote it on purpose. To let the phone '
+        + `through, narrow it so it does not cover this machine on port ${port} — the usual `
+        + 'way is to exclude the phone\'s own address from it, which is what "all other '
+        + 'devices" was probably meant to say in the first place.'
+      : 'A phone on a mesh VPN is unaffected, because that traffic arrives on its own '
+        + 'address rather than the local one — which is why a VPN address is listed here '
+        + 'and why it keeps working away from the house.');
+  }
+
+  $('firewallhead').textContent = state.blocked
+    ? 'Windows Firewall is blocking this'
+    : (loud ? 'A firewall rule is blocking this' : 'The local network route is closed');
+
+  box.classList.toggle('quiet', !loud);
+  $('firewalltext').textContent = parts.join('\n\n');
+  $('firewallfix').hidden = !state.blocked;
+  $('firewallnote').textContent = '';
+}
+
+$('firewallfix').addEventListener('click', async () => {
+  const button = $('firewallfix');
+  button.disabled = true;
+  $('firewallnote').textContent = 'Waiting for Windows…';
+
+  let result;
+  try {
+    result = await api.remote.fixFirewall();
+  } catch (err) {
+    result = { ok: false, message: err.message };
+  }
+
+  button.disabled = false;
+  $('firewallnote').textContent = result.ok ? 'Done — try the phone again.' : result.message;
+  refreshRemote();
+});
+
+function paintDevices(devices, connected) {
+  remoteDevices.textContent = '';
+
+  if (!devices.length) {
+    const none = document.createElement('div');
+    none.className = 'remote-empty';
+    none.textContent = 'None yet.';
+    remoteDevices.appendChild(none);
+    return;
+  }
+
+  const live = new Set(connected.map((d) => d.id));
+
+  for (const device of devices) {
+    const row = document.createElement('div');
+    row.className = 'remote-device';
+    row.innerHTML = '<span class="dot"></span><span class="name"></span>'
+      + '<span class="when"></span><button class="forget">Remove</button>';
+    row.querySelector('.name').textContent = device.name;
+    row.querySelector('.when').textContent = live.has(device.id)
+      ? 'connected now'
+      : `last seen ${relative(device.lastSeen)}`;
+    row.classList.toggle('state-ready', live.has(device.id));
+    row.querySelector('.forget').addEventListener('click', async () => {
+      await api.remote.forget(device.id);
+      refreshRemote();
+    });
+    remoteDevices.appendChild(row);
+  }
+}
+
+function paintCode(code) {
+  clearInterval(codeTimer);
+  codeTimer = null;
+
+  if (!code) {
+    remoteCode.hidden = true;
+    return;
+  }
+
+  remoteCode.hidden = false;
+  remoteCodeValue.textContent = code.code;
+
+  // A code with no countdown on it is a code nobody knows has expired, and a
+  // pairing that fails for that reason looks exactly like one that failed for
+  // any other.
+  const tick = () => {
+    const left = code.expiresAt - Date.now();
+    if (left <= 0) {
+      remoteCodeNote.textContent = 'expired — ask for another';
+      clearInterval(codeTimer);
+      codeTimer = null;
+      return;
+    }
+    const secs = Math.ceil(left / 1000);
+    remoteCodeNote.textContent = `expires in ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
+  };
+  tick();
+  codeTimer = setInterval(tick, 1000);
+}
+
+$('remotepair').addEventListener('click', async () => {
+  paintCode(await api.remote.newCode());
+});
+
+// The server coming up or going down, or a phone connecting — repaint if the
+// panel that shows any of it happens to be open.
+api.remote.onChanged(() => {
+  if (setupOpen() && panel === 'phone') refreshRemote();
+});
+
 async function openSetup(state) {
   if (setupOpen()) return;
 
@@ -1229,12 +1730,22 @@ async function openSetup(state) {
   setupReturn = document.activeElement;
   setupProjectsError.textContent = '';
   setupBackupError.textContent = '';
+  setupRemoteError.textContent = '';
+  envLocked = env;
 
   // A first run has nothing saved to show, so the fields open on the guesses.
   setupProjects.value = everSaved ? config.projectsRoot : suggested.projectsRoot;
   setupBackupRoot.value = (everSaved && config.backupRoot) || suggested.backupRoot;
   setupBackup.checked = everSaved ? config.backupEnabled : Boolean(suggested.dropbox);
   paintBackupBox();
+
+  // Both of these are off until asked for, on a first run and on every run
+  // after it, so there is nothing to guess at — they open on what was saved.
+  setupRemote.checked = Boolean(config.remoteEnabled);
+  setupRemotePort.value = String(config.remotePort || 7433);
+  setupAutoStart.checked = Boolean(config.autoStart);
+  setupMinimised.checked = Boolean(config.startMinimised);
+  paintRemoteBox();
 
   // Worth saying out loud, because "we found Dropbox and put your backups in
   // it" is otherwise something the app does to you silently.
@@ -1251,6 +1762,7 @@ async function openSetup(state) {
   const locked = [
     env.projectsRoot && 'the projects folder',
     env.backupRoot && 'the backup folder',
+    env.remotePort && 'the phone port',
   ].filter(Boolean);
   setupProjects.disabled = env.projectsRoot;
   if (env.projectsRoot) setupProjects.value = config.projectsRoot;
@@ -1266,6 +1778,9 @@ async function openSetup(state) {
   // Nothing to cancel back to on a first run — the app behind this is empty.
   setupCancel.hidden = !everSaved;
 
+  setupTabs.hidden = !everSaved;
+  showPanel(everSaved ? panel : 'projects', { firstRun: !everSaved });
+
   setup.hidden = false;
   (setupProjects.disabled ? setupSave : setupProjects).focus();
 }
@@ -1273,6 +1788,13 @@ async function openSetup(state) {
 function closeSetup() {
   if (!setupOpen()) return;
   setup.hidden = true;
+
+  // A pairing code lives for five minutes, and the panel showing it is now
+  // shut. Anything still open when nobody is looking is a code that could be
+  // used by someone who saw it over your shoulder, so it goes with the card.
+  api.remote.cancelCode();
+  paintCode(null);
+
   if (setupReturn && setupReturn.focus) setupReturn.focus();
   setupReturn = null;
 }
@@ -1283,9 +1805,18 @@ async function browseFor(input, title) {
   if (picked) input.value = picked;
 }
 
+// Where a rejected field lives, so a message about the phone port does not get
+// printed under the projects folder on a panel nobody is looking at.
+const ERROR_FIELDS = {
+  projectsRoot: { panel: 'projects', line: () => setupProjectsError, focus: () => setupProjects },
+  backupRoot: { panel: 'backups', line: () => setupBackupError, focus: () => setupBackupRoot },
+  remotePort: { panel: 'phone', line: () => setupRemoteError, focus: () => setupRemotePort },
+};
+
 async function submitSetup() {
   setupProjectsError.textContent = '';
   setupBackupError.textContent = '';
+  setupRemoteError.textContent = '';
   setupSave.disabled = true;
 
   let result;
@@ -1294,6 +1825,10 @@ async function submitSetup() {
       projectsRoot: setupProjects.value,
       backupEnabled: setupBackup.checked,
       backupRoot: setupBackupRoot.value,
+      remoteEnabled: setupRemote.checked,
+      remotePort: Number(setupRemotePort.value),
+      autoStart: setupAutoStart.checked,
+      startMinimised: setupMinimised.checked,
     });
   } catch (err) {
     result = { ok: false, field: null, message: err.message };
@@ -1302,16 +1837,25 @@ async function submitSetup() {
   }
 
   if (!result.ok) {
-    const target = result.field === 'backupRoot' ? setupBackupError : setupProjectsError;
-    target.textContent = result.message;
-    if (result.field === 'backupRoot') setupBackupRoot.focus();
-    else setupProjects.focus();
+    const where = ERROR_FIELDS[result.field] || ERROR_FIELDS.projectsRoot;
+    if (configured) showPanel(where.panel);
+    where.line().textContent = result.message;
+    where.focus().focus();
     return;
   }
 
   configured = true;
-  closeSetup();
+  const wantedPhone = result.config.remoteEnabled;
   await applySettings(result.config);
+
+  // Turning phone access on and then having the card close on you leaves the
+  // one thing you came here for — a pairing code — one click away on a panel
+  // you have to find again. So the card stays up, showing what the server did.
+  if (wantedPhone && panel === 'phone') {
+    refreshRemote();
+    return;
+  }
+  closeSetup();
 }
 
 /**
@@ -1338,9 +1882,11 @@ async function applySettings(config) {
 setupSave.addEventListener('click', submitSetup);
 setupCancel.addEventListener('click', closeSetup);
 setupBackup.addEventListener('change', paintBackupBox);
+setupRemote.addEventListener('change', paintRemoteBox);
 $('setupprojectsbrowse').addEventListener('click', () => browseFor(setupProjects, 'Where your projects live'));
 $('setupbackupbrowse').addEventListener('click', () => browseFor(setupBackupRoot, 'Where backups go'));
 $('opensettings').addEventListener('click', () => openSetup());
+$('opensettings2').addEventListener('click', () => openSetup());
 
 // Same rule as the new-project modal: a click on the backdrop dismisses, but
 // only once it has been answered at least once.
@@ -1368,11 +1914,17 @@ setup.addEventListener('mousedown', (e) => {
   }
 
   configured = true;
-  const { projects: found, root, ignored } = await api.listProjects();
-  projects = found;
-  projectsRoot = root || '';
-  ignoredNames = ignored || [];
-  renderSidebar();
+  await refreshProjects();
+
+  // Terminals outlive this window now — it can be closed to the tray and
+  // reopened, and a phone can start one while it is down. So the window is
+  // built around whatever is already running rather than assuming an empty
+  // list, and each pane is caught up on what it missed.
+  try {
+    for (const session of await api.listSessions()) await adoptSession(session);
+  } catch (err) {
+    console.error('Hangar: could not pick up the running terminals', err);
+  }
 
   refreshUsage();
   setInterval(refreshUsage, USAGE_TICK_MS);

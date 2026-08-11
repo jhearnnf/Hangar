@@ -18,7 +18,9 @@ There is no build step and no installer. The source you are reading is what runs
 
 The first launch asks two questions — where your projects live, and whether to keep backup
 copies of them — and nothing is written anywhere until you answer. Both are changeable
-afterwards from **Settings** at the foot of the sidebar.
+afterwards from the **Settings** cog at the foot of the sidebar, which also holds the two
+things this asks nothing about on a first run: whether your phone may connect, and whether
+Hangar starts with Windows.
 
 ## On a Mac
 
@@ -104,8 +106,16 @@ check each one against the code rather than take it on trust. Every path below i
 file; none of it is minified or bundled.
 
 **Network.** One outbound URL in the entire app: `https://api.anthropic.com/api/oauth/usage`,
-in `usage.js`, for the usage bars. Nothing else phones anywhere — `grep -rn "http" *.js
-renderer/*.js` is the whole audit. No telemetry, no update check, no analytics.
+in `usage.js`, for the usage bars. No telemetry, no update check, no analytics.
+
+Inbound is the other half, and it is off until you turn it on. With **Settings → Phone**
+ticked, Hangar listens on port 7433 of your local network so the Android app can reach it
+(`server.js`), and answers discovery probes on UDP 7434 (`discovery.js`). Both stop the
+moment the box is unticked. Neither is reachable from the internet: a connection from any
+address that is not private is dropped before it is upgraded, and a socket that has not
+paired may send nothing but a pairing code. See *Hangar on your phone* for what pairing is
+and what a paired phone can do — which is everything you can do sitting at the machine, so
+it is worth reading before ticking the box.
 
 **Your Claude credentials.** That request needs a token, and it reads the one Claude Code
 already keeps at `~/.claude/.credentials.json` (`readToken` in `usage.js`) — or, on macOS
@@ -116,7 +126,7 @@ never handed to the renderer — the renderer receives two percentages and a res
 Nothing is written back to that file. Delete `usage.js` and the feature simply hides
 itself. If you have no credentials file, the bars never appear and no request is made.
 
-**Files it writes.** Three places, all of them yours, and only one of them off by default:
+**Files it writes.** Four places, all of them yours, and only one of them off by default:
 
 - The backup folder you chose, if you turned backups on at all — a mirror of each project
   (`backup.js`). It shells out to `robocopy /MIR`, or to `rsync -a --delete` off Windows,
@@ -125,16 +135,23 @@ itself. If you have no credentials file, the bars never appear and no request is
   inside the backup root, and the setup screen refuses a backup folder that sits inside
   the projects folder, which between them keep the mirror from being pointed at anything
   you care about. It only ever writes outward and never reads the copy back.
-- `%APPDATA%\hangar\config.json` — the two answers from the setup screen.
+- `%APPDATA%\hangar\config.json` — the answers from the settings screen.
 - `%APPDATA%\hangar\window-state.json` — the window position, and nothing else.
+- `%APPDATA%\hangar\devices.json` — the phones you have paired: a name, a date, and the
+  key each one holds. Written only when you pair one, deleted when you remove one, and
+  never sent anywhere. Deleting the file unpairs every phone.
 
-On macOS those last two are `~/Library/Application Support/Hangar/` instead.
+On macOS those last three are `~/Library/Application Support/Hangar/` instead.
 
 Creating a project makes an empty folder in the projects root. That is every write.
 
-**Processes it starts.** A pty per tab, running your shell or `claude` (`main.js`), plus
-`robocopy` or `rsync` for backups, and on macOS `security` to read the usage token.
-Nothing runs at login, nothing installs a service, nothing runs elevated.
+**Processes it starts.** A pty per terminal, running your shell or `claude`
+(`sessions.js`), plus `robocopy` or `rsync` for backups, and on macOS `security` to read
+the usage token. Nothing installs a service and nothing runs elevated.
+
+**At login.** Nothing, unless you tick *Start Hangar when Windows starts*, which writes a
+per-user startup entry through Electron's own API — the same list Task Manager's Startup
+tab shows and can disable. Unticking the box removes it. See *Starting with Windows*.
 
 **The one thing that runs by itself.** `npm install` runs the `postinstall` in
 `package.json`, which is `tools/fix-spawn-helper.js` — on macOS only, it adds the
@@ -153,9 +170,11 @@ a Hangar.exe* below for why they exist. Each writes in exactly one place — bes
 in `node_modules`, plus the Desktop and Start Menu for the Windows shortcut, and
 `/Applications` for the Mac bundle if you ask for it there.
 
-**Dependencies.** Seven, in `package.json`: `@xterm/*` (the terminal widget VS Code uses),
-`node-pty` (the pty binding Windows Terminal and VS Code use), and Electron itself. Pinned
-by `package-lock.json`. Scanning this repo does not cover those — `npm install` fetches
+**Dependencies.** Eight, in `package.json`: `@xterm/*` (the terminal widget VS Code uses),
+`node-pty` (the pty binding Windows Terminal and VS Code use), `ws` (the WebSocket server
+the phone connects to — pure JavaScript, no dependencies of its own), and Electron itself.
+Pinned by `package-lock.json`. The Android app has its own `mobile/package.json` and its
+own `node_modules`, so nothing Capacitor needs is installed for a desktop-only checkout. Scanning this repo does not cover those — `npm install` fetches
 them from npm at install time, the same trust surface as any Node project. `npm ci` will
 install exactly the locked versions.
 
@@ -224,11 +243,27 @@ through, everything printed before `claude` started is still there when it exits
 
 ## Settings
 
-Two answers, asked on the first launch and editable afterwards from **Settings** at the
-foot of the sidebar: the folder your projects live in, and whether to keep backup copies of
-them and where. They are saved to `config.json` in Electron's `userData` — per-machine
-preference, not something to carry around in the repo, which is the same reasoning that
-puts `window-state.json` there.
+The cog at the foot of the sidebar — and the one at the right-hand end of the tab strip,
+which is what you see when the sidebar is hidden, since settings must not be reachable only
+from a panel you can hide. Four groups behind it:
+
+| Group | What is in it |
+| --- | --- |
+| **Projects** | The folder your projects live in |
+| **Backups** | Whether to keep backup copies of them, and where |
+| **Phone** | Whether a phone may connect, on which port, and which phones may |
+| **Startup** | Whether to start with Windows, and whether to start into the tray |
+
+A first run is the exception: it shows the first two on their own with no tab strip,
+because until someone has said where their projects are, nothing else means anything. All
+of it is saved to `config.json` in Electron's `userData` — per-machine preference, not
+something to carry around in the repo, which is the same reasoning that puts
+`window-state.json` there.
+
+Everything takes effect on **Save** rather than at the next launch: the startup entry is
+written, the server comes up or goes down, and the tray icon appears or disappears. A
+settings screen that needed a restart to mean anything would be a settings screen nobody
+believed.
 
 `HANGAR_PROJECTS_ROOT` and `HANGAR_BACKUP_ROOT` still work and still win, field by field,
 over whatever was saved. They are the escape hatch for a machine where the saved answer is
@@ -243,14 +278,173 @@ so one variable never discards the rest. A config file that cannot be read, or t
 missing the projects root, counts as a first run and asks again rather than quietly
 running on defaults nobody chose.
 
+## Hangar on your phone
+
+The Android app in `mobile/` is a second window onto the same Hangar. It lists the same
+projects, shows the same terminals — the ones already running, not copies of them — and
+types into them. The PC does all the work; the phone is a viewer with a keyboard attached.
+Same house only: the phone talks straight to the PC over your router, and there is no
+account, no cloud and no outbound connection anywhere in it.
+
+### The terminals moved
+
+This is the change underneath everything else. A terminal used to belong to the window: the
+window created it, held its scrollback, and killed it on close. That works for exactly one
+screen, so terminals now live in the main process (`sessions.js`) and the window is one
+viewer of them among others. Three things follow, and the first two are improvements to the
+desktop app whether or not you ever install the phone one:
+
+- A terminal survives the window being closed to the tray.
+- A terminal opened on the phone appears in the sidebar, with its name and its coloured
+  dot, and one opened at the desk appears on the phone.
+- Naming and stage detection moved with it. They happen once, in the main process, so the
+  two screens cannot end up calling one terminal two different things.
+
+Each terminal keeps the last 512KB of what it printed. A viewer attaches with the sequence
+number it last saw and is sent only what came after it, which is the whole of the resume
+protocol — it is what makes unlocking your phone show a live terminal rather than a blank
+one. What no replay can reconstruct is a full-screen TUI's current screen, because that was
+painted into a buffer rather than printed: so on attach, a session on the alternate screen
+gets its width nudged a column out and back, which is how tmux asks a program to redraw
+itself and works on `claude` too.
+
+### Turning it on
+
+**Settings → Phone**, tick *Let my phone connect*, Save. Then *Show a code* and type the six
+characters into the phone once.
+
+Three things do the security, and all three are in `server.js`:
+
+- **Off unless switched on.** No setting, no listener, no port.
+- **Local addresses only.** A connection from anything that is not a private address is
+  dropped before the socket is upgraded — a forwarded port cannot turn this into something
+  the internet can reach.
+- **Paired or nothing.** An unpaired socket may send exactly one kind of message, a pairing
+  code, and is closed after thirty seconds if it does not. The code lasts five minutes and
+  one use, is spent whether the attempt succeeded or not, and dies after five wrong tries.
+  What the phone gets back is a 32-byte key it keeps; the code is never needed again.
+  Settings lists every phone holding one, with a Remove button.
+
+A paired phone can open terminals and type into them, which is the same as sitting at the
+keyboard. That is the point of it, and it is why pairing needs someone at the PC.
+
+The phone normally finds the PC by itself: it broadcasts one UDP packet and Hangar answers
+with its name and port (`discovery.js`, and the small Java plugin in the Android project,
+which exists because a WebView has no UDP). Settings also shows the addresses to type by
+hand when that fails. Pointing a phone browser at `http://<pc>:7433` serves the same client
+and is the quickest way to find out whether the PC half is working.
+
+### Over a mesh VPN, and away from home
+
+If the machine is on Tailscale or something like it, Settings lists that address too, greyed
+out and tagged `VPN`. It is worth telling apart from the others: it works from a phone on
+the same mesh and from nowhere else, and it fails by going *silent* rather than by refusing
+— which is how a firewall, the wrong wifi and a switched-off PC all fail too, so two
+undistinguished addresses in a row is a coin toss nobody knows they are making. Discovery
+never finds it, because no mesh carries a broadcast; type it in.
+
+It is also the way out of a LAN that will not cooperate. A mesh address arrives on its own
+interface, so a firewall rule scoped to the local subnet — including one written to keep
+other devices on the router out — simply does not apply to it. And unlike the LAN route it
+keeps working when you leave the house. The firewall button allows `100.64.0.0/10` alongside
+the local subnet, but only on a machine that actually has a mesh interface: widening a rule
+for a route that does not exist is exactly what a firewall rule should never do.
+
+### When the phone says nothing happens
+
+Two failures, told apart by how long they take (`client.js`), because they want opposite
+fixes and a WebSocket reports both as the same bare close:
+
+- **Refused, in milliseconds.** Something is at that address with nothing listening on the
+  port. Hangar is not running, phone access is not ticked, or the port is wrong.
+- **Silence.** The packets are being dropped rather than answered. Windows Firewall, a
+  guest wifi that keeps devices apart, or the wrong address.
+
+For the first of those the PC can usually say what is wrong itself, and `firewall.js` is
+the part that does. Windows asks once, the first time Hangar listens, and answering that
+prompt with the box for this kind of network unticked does not decline to add a rule — it
+writes a **Block** one, permanently, and never asks again. After that everything looks
+correct: the port listens, `netstat` agrees, and every packet is dropped. So Settings reads
+Hangar's own rules back (`netsh` can list them without elevation) and says so, with a button
+that asks Windows for permission to put it right.
+
+It also looks for the nastier kind: an enabled inbound Block rule that names **no program**
+at all. Windows lets a block beat any allowance beside it, however specific, so one
+hand-written "block everything arriving from the network" rule outranks every allowance made
+for the phone while never mentioning Hangar — nothing about the phone panel looks wrong, and
+there is nothing to find unless you already know to look. Those are named and never touched:
+somebody wrote that rule on purpose, and quietly removing it to make a terminal app work
+would be an appalling thing to do.
+
+### Building the APK
+
+```
+cd mobile
+npm install
+npm run icon        # launcher icons, rasterised from assets/icon.svg
+npm run android     # sync www, then gradlew assembleDebug
+```
+
+Out comes `mobile/android/app/build/outputs/apk/debug/app-debug.apk`, which you sideload.
+Debug-signed on purpose — this is a personal tool on your own network, not something going
+near a store, and a debug build needs no keystore to look after. `android/local.properties`
+and `gradle.properties` name the SDK and the JDK on this machine; both are per-machine, and
+`local.properties` is gitignored.
+
+`mobile/www` is the whole app and there is no bundler — the same rule as the desktop side.
+`tools/sync-www.js` copies xterm out of the desktop's `node_modules` rather than installing
+a second one, so the phone and the PC can never draw the same escape sequences two
+different ways.
+
+### The input problem
+
+A phone keyboard is a bad terminal: no Esc, no Tab, no arrows, autocorrect fighting the
+TUI, and every keystroke crossing wifi to a program that redraws on each one. So the normal
+way to type is a compose box — write the whole prompt, send it in one go — with a strip
+above it for the keys the keyboard lacks, including the 1/2/3 that answer Claude's
+permission prompts. The ⋮ menu switches to raw typing for the times you need single keys.
+
+A phone is also far narrower than a desktop terminal, and a terminal can only be one width,
+so one viewer owns it: the PC by default, with the phone drawing the same grid at whatever
+text size makes all of it fit. One tap in the ⋮ menu hands the width to the phone instead,
+and the PC letterboxes until you hand it back. It goes back on its own when the phone
+disconnects.
+
+## Starting with Windows
+
+**Settings → Startup**, two separate tick boxes:
+
+- **Start Hangar when Windows starts** puts it in the ordinary per-user startup list — the
+  one the Startup tab of Task Manager shows and can turn off. No service, no scheduled
+  task, nothing elevated; unticking the box takes the entry straight back out. The entry is
+  rewritten on every launch as well as on save, so one that points at a checkout which has
+  since moved repairs itself rather than failing silently every morning. It points at
+  `Hangar.exe` where `npm run exe` has made one, so the startup list says Hangar rather
+  than Electron.
+- **Start minimised to the tray** brings Hangar up with no window at all, just an icon by
+  the clock, so the terminals and the phone connection are there without a window jumping in
+  front of what you were doing. The flag that means this is written into the startup entry
+  rather than read from the config, because "start minimised" has to mean *when Windows
+  started it* — otherwise opening Hangar yourself would appear to do nothing.
+
+With the tray icon on, closing the window hides it instead of quitting and the terminals
+keep running; **Quit Hangar** in the tray menu is the way out. With it off, closing the
+window is the end of Hangar exactly as it always was.
+
+Hangar also takes a single-instance lock now. There was no way to end up with two before —
+you launched it yourself, and a second one was a mistake you could see — but Windows
+launching it at login means a double-click half an hour later would otherwise be a second
+copy losing a fight over the port, silently. The second copy hands its launch to the first,
+which shows itself.
+
 ## Projects sidebar
 
 The sidebar lists every directory sitting inside the projects folder — by default the one
 Hangar itself sits in, so its siblings are the list. The arrow expands a project to show its terminals; `+` or a
 double-click on the name opens a terminal **in that project's directory running `claude`**,
 hold shift for a plain shell. Only the arrow expands, so a double-click never has the row
-folding away underneath it. Every project starts collapsed — terminals die with the window,
-so a project reopened expanded would only ever be an empty list. `Ctrl+Shift+E`
+folding away underneath it. Every project starts collapsed and is expanded by opening a
+terminal in it, or by the arrow. `Ctrl+Shift+E`
 hides the sidebar, and the top tab strip appears in its place — never both at once, since
 they would be listing the same terminals twice.
 
@@ -420,7 +614,13 @@ meta-return it has nothing to do with.
 
 | File | Role |
 | --- | --- |
-| `main.js` | Electron main: window, and one `node-pty` per tab |
+| `main.js` | Electron main: window, tray, startup entry, and the wiring between the rest |
+| `sessions.js` | Every running terminal — the ptys, their scrollback, names and stages |
+| `server.js` | The local server a phone talks to |
+| `devices.js` | Pairing codes and the keys paired phones hold — pure, tested |
+| `discovery.js` | Answering "any Hangars out there?", and which addresses to offer |
+| `startup.js` | What the Windows startup entry should point at — pure, tested |
+| `mobile/` | The Android app: `www/` is the client, `android/` is the Capacitor shell |
 | `shell.js` | Shell selection, argv building, project scanning — all pure, all tested |
 | `window-state.js` | Where the window was last time — pure geometry, tested |
 | `config.js` | The setup screen's answers — resolution order and path guards, tested |

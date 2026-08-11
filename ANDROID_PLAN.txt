@@ -1,0 +1,180 @@
+HANGAR ON YOUR PHONE — THE PLAN
+===============================
+
+What we are building, in one sentence: the desktop PC keeps doing all the real
+work, and the Android app is a second window onto it that you carry around the
+house.
+
+
+THE SHAPE OF IT
+---------------
+
+    [ Android phone ]  ---- wifi / your router ---->  [ Desktop PC ]
+      Hangar app                                       Hangar (Electron)
+      - list of projects                               - runs the terminals
+      - the live terminals                             - holds the scrollback
+      - type into them                                 - a small local server
+
+Nothing leaves your house. There is no cloud, no account, no internet. The phone
+talks straight to the PC over the router, so both have to be on the same wifi.
+Away from home, nothing connects — that is a later job (Tailscale or similar),
+not this one.
+
+
+THE FIVE PIECES OF WORK
+-----------------------
+
+1. MOVE THE TERMINALS INTO THE ENGINE ROOM
+
+   Today each terminal belongs to the Hangar window: the window creates it, the
+   window holds its history, and closing the window kills it. That cannot work
+   when two screens want the same terminal.
+
+   So terminals move down one level, into Hangar's main process. It now keeps,
+   for every terminal: the running shell, the last chunk of everything it has
+   printed, its name, and which stage it is in (the coloured dot). The desktop
+   window becomes just another viewer of that list. The phone becomes a second
+   viewer of the same list.
+
+   What you get from this on the desktop, for free: a terminal no longer dies
+   when the window is hidden, and a terminal the phone opens shows up in the
+   desktop sidebar the moment it is created.
+
+2. THE LOCAL SERVER
+
+   A small web server inside Hangar, listening on your home network on port
+   7433. It only runs if you turn it on in Settings. It speaks one connection
+   per phone, and over that connection it sends: the project list, the terminal
+   list, and every character every terminal prints. Back the other way it takes:
+   what you type, resizes, "open a terminal here", "close that one".
+
+   Yes, this really is required — the phone has to get the output from
+   somewhere, and something on the PC has to be listening. There is no simpler
+   way that still gives live terminals.
+
+   FINDING THE PC. The phone shouts "any Hangars out there?" on the network and
+   Hangar shouts back its name and address, so normally you never type an IP.
+   There is a box to type one by hand if that fails.
+
+   SECURITY, because this matters. A server that hands out a shell on your PC to
+   anyone on the wifi would be a bad thing to leave running. So:
+     - it is off until you turn it on;
+     - it only accepts connections from home-network addresses, never the
+       internet;
+     - a phone must be PAIRED once: Settings shows a six-character code, you
+       type it into the phone, and the phone gets a long secret key it keeps
+       from then on. The code dies after five minutes or after one use.
+     - Settings lists every paired phone, with a Remove button.
+
+3. STARTING WITH WINDOWS
+
+   Two separate switches in Settings:
+     - "Start Hangar when Windows starts" — Hangar comes up at login, so the
+       server is there before you pick your phone up.
+     - "Start minimised to the tray" — it comes up with no window at all, just
+       an icon by the clock. Click the icon for the window; right-click it for
+       Quit. With this on, closing the window hides it instead of quitting, so
+       your terminals keep running.
+
+   Neither installs a service or needs admin. It is the ordinary Windows
+   startup list, and unticking the box takes it straight back out again.
+
+4. THE SETTINGS COG
+
+   Settings currently hides behind a text link at the foot of the sidebar, and
+   is unreachable when the sidebar is hidden. It becomes a cog icon, in two
+   places: the foot of the sidebar (where it lives now) and the right-hand end
+   of the tab strip (which is what you see when the sidebar is hidden).
+
+   The card behind it grows from two questions to four groups, so it gains a
+   row of tabs across the top:
+
+       [ Projects ] [ Backups ] [ Phone ] [ Startup ]
+       -------------------------------------------------
+        ...one group's fields...
+       -------------------------------------------------
+                                    [ Cancel ]  [ Save ]
+
+   First run is the exception: it still shows only the two original questions,
+   with no tabs, because nobody wants a settings panel before they have used
+   the app once.
+
+   The Phone tab is where the server switch, the pairing code, the address to
+   type, and the list of paired phones live.
+
+5. THE ANDROID APP ITSELF
+
+   Built with Capacitor, the same as the SkyWatch app — an Android shell around
+   a web page, and the web page is a small mobile-shaped Hangar.
+
+   Three screens, with a bar along the bottom:
+
+       PROJECTS                TERMINALS              (cog) SETTINGS
+       every project,          every live terminal    which PC, font size,
+       tap to open one,        across all projects,   forget this PC
+       coloured dot for        for quick switching
+       what it is doing
+
+   And the terminal screen itself, which is the point of the whole thing:
+
+       +-------------------------+
+       | (dot) fix login redirect|  <- name and stage, same as the desktop
+       +-------------------------+
+       |  the real terminal,     |  <- exactly what the desktop shows
+       |  live, scrollable       |
+       |                         |
+       +-------------------------+
+       | esc tab ^ v < > ctrl 1 2|  <- keys a phone keyboard does not have
+       +-------------------------+
+       | [ type a prompt...] >   |  <- write the whole line, then send
+       +-------------------------+
+
+   THE INPUT PROBLEM, and why it looks like that. A phone keyboard is a bad
+   terminal: there is no Esc, no Tab, no arrows, autocorrect fights the TUI, and
+   sending every keystroke one at a time over wifi feels like treacle. So the
+   normal way to type is the box at the bottom — compose the whole prompt, hit
+   send, it arrives in one go. The strip above it covers the keys the phone
+   lacks, including the 1/2 that answer Claude's permission prompts. For the
+   times you really do need raw typing, the ... menu has a switch that puts the
+   keyboard straight into the terminal.
+
+   SIZE. A desktop terminal is far wider than a phone. By default the phone
+   shows the desktop's exact layout, shrunk to fit (readable in landscape). One
+   tap in the ... menu re-flows the terminal to the phone's width instead —
+   handy when you are only on the phone, and the desktop just letterboxes until
+   you tap it back.
+
+   RECONNECTING. Phones sleep and drop wifi constantly. The app remembers where
+   it was up to in each terminal and asks only for what it missed, so unlocking
+   your phone brings back a live terminal rather than a blank screen.
+
+
+WHAT WE ARE NOT DOING YET
+-------------------------
+
+  - Working away from home. LAN only, as agreed.
+  - A signed, upgradeable APK. This is a debug build you sideload.
+  - Push notifications for "Claude needs you". Would be lovely later.
+  - Editing files on the phone. It drives terminals; it is not an editor.
+
+
+HOW YOU WILL GET IT
+-------------------
+
+  On the PC:      Settings -> Phone -> tick "Let my phone connect", note the
+                  six-character pairing code.
+  On the phone:   install the APK (built by `npm run android` in mobile/),
+                  open it, pick the PC it found, type the code. Once only.
+
+FILES THIS TOUCHES
+------------------
+
+  new:  sessions.js      the terminals, now owned by the main process
+        server.js        the local server the phone talks to
+        devices.js       pairing codes and paired-phone keys
+        discovery.js     answering "any Hangars out there?"
+        startup.js       the Windows startup entry
+        mobile/          the whole Android app
+
+  changed:  main.js, preload.js, config.js, renderer/* (the cog and the
+            four-tab settings card)

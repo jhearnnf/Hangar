@@ -6,3 +6,16 @@ out/
 # Rasterised from assets/icon.svg by `npm run icon`. icon.ico is committed,
 # since the desktop shortcut points straight at it.
 assets/icon-*.png
+
+# The Android app. `mobile/www` is source and is committed; everything below is
+# either copied there by a script or written by Gradle.
+mobile/www/vendor/
+mobile/android/app/src/main/assets/public/
+mobile/android/app/src/main/assets/capacitor.config.json
+mobile/android/app/src/main/res/mipmap-*/ic_launcher*.png
+mobile/android/build/
+mobile/android/app/build/
+mobile/android/capacitor-cordova-android-plugins/
+mobile/android/.gradle/
+mobile/android/local.properties
+

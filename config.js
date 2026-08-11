@@ -22,10 +22,21 @@ const fs = require('fs');
 // way it does.
 const CONFIG_FILE = 'config.json';
 
+// The port the phone talks to. Nothing famous lives here, and it is only ever
+// listened on when someone has ticked the box.
+const DEFAULT_REMOTE_PORT = 7433;
+
 const DEFAULTS = {
   projectsRoot: '',      // filled in by suggestions() — depends on where Hangar sits
   backupEnabled: false,  // off until someone says otherwise; it writes to disk
   backupRoot: '',
+  // All three of these are off until asked for, and for the same reason: each
+  // one does something outside this window — opens a port, writes a startup
+  // entry — that nobody should discover after the fact.
+  remoteEnabled: false,
+  remotePort: DEFAULT_REMOTE_PORT,
+  autoStart: false,
+  startMinimised: false,
 };
 
 /**
@@ -83,6 +94,14 @@ function parseConfig(raw) {
   if (typeof saved.backupRoot === 'string') out.backupRoot = saved.backupRoot;
   if (typeof saved.backupEnabled === 'boolean') out.backupEnabled = saved.backupEnabled;
 
+  // Read one at a time rather than spread in, so a hand-edited file with
+  // nonsense in these fields falls back to the defaults for those fields alone
+  // instead of taking the whole config down with it.
+  if (typeof saved.remoteEnabled === 'boolean') out.remoteEnabled = saved.remoteEnabled;
+  if (Number.isInteger(saved.remotePort)) out.remotePort = saved.remotePort;
+  if (typeof saved.autoStart === 'boolean') out.autoStart = saved.autoStart;
+  if (typeof saved.startMinimised === 'boolean') out.startMinimised = saved.startMinimised;
+
   // The projects root is the one answer the setup screen always writes, so a
   // file without a usable one was not written by it — an empty object, or a
   // half-edited file. Null rather than a partial config, because null is what
@@ -103,6 +122,10 @@ function parseConfig(raw) {
  */
 function resolveConfig(saved, { env = process.env, defaults = DEFAULTS } = {}) {
   const from = saved || {};
+  // Callers pass the defaults they actually have an opinion about — the two
+  // folders — so the rest are filled in from here rather than arriving
+  // undefined and being mistaken for a deliberate answer.
+  defaults = { ...DEFAULTS, ...defaults };
 
   const projectsRoot = env.HANGAR_PROJECTS_ROOT || from.projectsRoot || defaults.projectsRoot;
   const backupRoot = env.HANGAR_BACKUP_ROOT || from.backupRoot || defaults.backupRoot;
@@ -114,12 +137,31 @@ function resolveConfig(saved, { env = process.env, defaults = DEFAULTS } = {}) {
     ? true
     : (typeof from.backupEnabled === 'boolean' ? from.backupEnabled : defaults.backupEnabled);
 
+  const port = Number(env.HANGAR_REMOTE_PORT) || from.remotePort || defaults.remotePort;
+
   return {
     projectsRoot,
     // A backup with nowhere to go is off however it was asked for.
     backupEnabled: Boolean(backupEnabled && backupRoot),
     backupRoot,
+
+    // Same escape hatch as the folders: an environment variable wins, so a
+    // machine where 7433 is taken can be moved without the UI.
+    remoteEnabled: env.HANGAR_REMOTE_PORT
+      ? true
+      : (typeof from.remoteEnabled === 'boolean' ? from.remoteEnabled : defaults.remoteEnabled),
+    remotePort: validPort(port) ? port : defaults.remotePort,
+    autoStart: typeof from.autoStart === 'boolean' ? from.autoStart : defaults.autoStart,
+    // Minimised has nothing to be minimised *from* unless something starts it,
+    // so it only means anything alongside autoStart.
+    startMinimised: Boolean(
+      (typeof from.startMinimised === 'boolean' ? from.startMinimised : defaults.startMinimised)),
   };
+}
+
+/** Ports Hangar will listen on: unprivileged, and real. */
+function validPort(value) {
+  return Number.isInteger(value) && value >= 1024 && value <= 65535;
 }
 
 /**
@@ -159,12 +201,35 @@ function validateConfig(input, deps = {}) {
   const projects = validateFolder(input && input.projectsRoot, { mustExist: true, ...deps });
   if (!projects.ok) return { ok: false, field: 'projectsRoot', message: projects.message };
 
-  const enabled = Boolean(input && input.backupEnabled);
+  const given = input || {};
+
+  // The port is typed into a text field, so it gets the same treatment as the
+  // folders: refused with a reason rather than silently corrected, since a
+  // phone that cannot find Hangar is a much worse thing to debug than a red
+  // line under a box.
+  const port = given.remotePort === undefined || given.remotePort === ''
+    ? DEFAULTS.remotePort
+    : Number(given.remotePort);
+  if (!validPort(port)) {
+    return { ok: false, field: 'remotePort', message: 'Pick a port between 1024 and 65535 — 7433 is the usual one.' };
+  }
+
+  const extras = {
+    remoteEnabled: Boolean(given.remoteEnabled),
+    remotePort: port,
+    autoStart: Boolean(given.autoStart),
+    startMinimised: Boolean(given.startMinimised),
+  };
+
+  const enabled = Boolean(given.backupEnabled);
   if (!enabled) {
     // The path is kept even when the toggle is off, so turning backups back on
     // does not mean picking the folder again.
-    const kept = (input && input.backupRoot || '').trim();
-    return { ok: true, config: { projectsRoot: projects.value, backupEnabled: false, backupRoot: kept } };
+    const kept = (given.backupRoot || '').trim();
+    return {
+      ok: true,
+      config: { projectsRoot: projects.value, backupEnabled: false, backupRoot: kept, ...extras },
+    };
   }
 
   const backup = validateFolder(input && input.backupRoot, { mustExist: false, ...deps });
@@ -186,17 +251,22 @@ function validateConfig(input, deps = {}) {
     };
   }
 
-  return { ok: true, config: { projectsRoot: projects.value, backupEnabled: true, backupRoot: backup.value } };
+  return {
+    ok: true,
+    config: { projectsRoot: projects.value, backupEnabled: true, backupRoot: backup.value, ...extras },
+  };
 }
 
 module.exports = {
   CONFIG_FILE,
   DEFAULTS,
+  DEFAULT_REMOTE_PORT,
   detectDropbox,
   suggestions,
   parseConfig,
   resolveConfig,
   validateFolder,
+  validPort,
   isInside,
   validateConfig,
 };

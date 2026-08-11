@@ -106,11 +106,11 @@ describe('resolveConfig', () => {
       { projectsRoot: PROJECTS, backupEnabled: true, backupRoot: BACKUPS },
       { env: {}, defaults },
     );
-    expect(c).toEqual({ projectsRoot: PROJECTS, backupEnabled: true, backupRoot: BACKUPS });
+    expect(c).toMatchObject({ projectsRoot: PROJECTS, backupEnabled: true, backupRoot: BACKUPS });
   });
 
   it('falls back to the defaults on a first run', () => {
-    expect(resolveConfig(null, { env: {}, defaults })).toEqual(defaults);
+    expect(resolveConfig(null, { env: {}, defaults })).toMatchObject(defaults);
   });
 
   it('lets an environment variable win over what was saved', () => {
@@ -199,7 +199,7 @@ describe('validateConfig', () => {
       { exists },
     );
     expect(res.ok).toBe(true);
-    expect(res.config).toEqual({ projectsRoot: PROJECTS, backupEnabled: true, backupRoot: BACKUPS });
+    expect(res.config).toMatchObject({ projectsRoot: PROJECTS, backupEnabled: true, backupRoot: BACKUPS });
   });
 
   it('refuses a projects folder that is not there', () => {

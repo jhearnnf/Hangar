@@ -548,8 +548,218 @@ html, body {
 
 .setup-card .modal-actions { margin-top: 20px; }
 
+/* -------------------------------------------------- setup: the four groups */
+
+/* Two questions grew into four groups, which is one scroll too many for a card
+   this size. The strip splits them up; only the group being looked at is in
+   the document at all, so the card stays the height of its shortest tab and
+   Tab never lands on a field nobody can see.
+
+   A first run has no strip and shows the first two groups together, because
+   until someone has said where their projects are there is nothing else worth
+   asking about. */
+
+.setup-tabs {
+  display: flex;
+  gap: 2px;
+  margin-top: 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.setup-tabs[hidden] { display: none; }
+
+.setup-tab {
+  padding: 7px 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  background: none;
+  color: var(--faint);
+  font: inherit;
+  cursor: pointer;
+}
+
+.setup-tab:hover { color: var(--dim); }
+
+.setup-tab.on {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+/* The first group in a panel does not need the rule that separates it from the
+   one above, because there is nothing above it any more. */
+.setup-body > .setup-field:first-child,
+.setup-tabs:not([hidden]) ~ .setup-body > .setup-field {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.setup-field[hidden] { display: none; }
+
+.setup-inline {
+  align-self: center;
+  color: var(--text);
+  font-size: 11px;
+}
+
+.setup-inline.dim { color: var(--faint); }
+
+.setup-input.narrow { flex: 0 0 90px; }
+
+/* --------------------------------------------------------- setup: phone */
+
+/* Loud, because everything else on this panel will look perfectly fine while
+   this is true, and the symptom on the phone is a screen that says nothing. */
+.firewall-warn {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--st-implementing);
+  border-radius: 4px;
+  background: rgba(232, 145, 58, 0.08);
+}
+
+.firewall-warn[hidden] { display: none; }
+
+/* Same box, no alarm: a deliberate rule that closes the local route is worth
+   saying once, and is not a fault to be shouted about — least of all to
+   someone whose phone is connected and working. */
+.firewall-warn.quiet {
+  border-color: var(--line);
+  background: none;
+}
+
+.firewall-warn.quiet .firewall-head { color: var(--dim); }
+
+.firewall-head {
+  color: var(--st-implementing);
+  font-size: 12px;
+}
+
+.firewall-text {
+  margin: 6px 0 0;
+  color: var(--dim);
+  font-size: 11px;
+  line-height: 1.6;
+  /* Two paragraphs, set as text rather than markup so nothing in a rule name
+     or a profile name can arrive as HTML. */
+  white-space: pre-line;
+}
+
+.firewall-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.remote-addresses {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.remote-address {
+  padding: 3px 7px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: #191c23;
+  color: var(--text);
+  font-size: 11px;
+  user-select: text;
+  cursor: text;
+}
+
+/* Dimmed and labelled rather than hidden: away from home it is the only one
+   that works, so it belongs on the list — just not looking like the answer. */
+.remote-address.overlay { color: var(--faint); }
+
+.remote-address-tag {
+  margin-left: 6px;
+  padding: 1px 4px;
+  border-radius: 2px;
+  background: var(--line);
+  color: var(--dim);
+  font-size: 9px;
+  letter-spacing: 0.5px;
+}
+
+.remote-pair {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.remote-pair-head,
+.remote-devices-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--text);
+  font-size: 12px;
+}
+
+/* Big, spaced and selectable: this is read off a screen and typed into a phone
+   from a couple of feet away, which is the whole reason the alphabet has no
+   O or I in it either. */
+.remote-code {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.remote-code[hidden] { display: none; }
+
+.remote-code-value {
+  color: var(--accent);
+  font-size: 26px;
+  letter-spacing: 6px;
+  user-select: text;
+  cursor: text;
+}
+
+.remote-code-note { color: var(--faint); font-size: 10px; }
+
+.remote-devices {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.remote-device-list { margin-top: 8px; }
+
+.remote-device {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.remote-device .name { color: var(--text); }
+.remote-device .when { flex: 1 1 auto; color: var(--faint); font-size: 10px; }
+
+.remote-device .forget {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: none;
+  color: var(--faint);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.remote-device .forget:hover { color: var(--st-planning); border-color: var(--st-planning); }
+
+.remote-empty { color: var(--faint); font-size: 11px; }
+
 /* A quiet link at the foot of the sidebar rather than a button — it is reached
-   once and then not again for weeks. */
+   once and then not again for weeks, and the word reads better next to the
+   hint line above it than an icon does. */
 .side-settings {
   display: block;
   margin-top: 6px;
@@ -563,6 +773,14 @@ html, body {
 }
 
 .side-settings:hover { color: var(--dim); }
+
+/* The tab strip has no room for a word, and it is the only chrome on screen
+   when the sidebar is hidden — so settings keeps a way in there, as a cog. */
+.icon.cog {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
 
 /* ------------------------------------------------------------- tab bar */
 
