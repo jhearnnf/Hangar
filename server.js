@@ -68,6 +68,12 @@ function createServer(deps) {
     createProject,
     usage,
     backup,
+    // Claude's own record of what has been worked on in a project, for the
+    // phone's long-press menu. Injected like `usage` and `backup` rather than
+    // required here, so this file still knows nothing about where any of it
+    // comes from — and so a server built without one simply has nothing to
+    // offer instead of failing to start.
+    recentSessions = () => [],
     info = () => ({}),
     wwwDir = null,
     log = () => {},
@@ -251,6 +257,15 @@ function createServer(deps) {
       case 'backup': {
         const result = await backup(message.projectPath);
         send(client, { t: 'backup', ref: message.ref, projectPath: message.projectPath, ...result });
+        return;
+      }
+
+      // The claude sessions a project has had. `projectPath` comes back with
+      // the answer because the phone asks on a long press and may well have
+      // let go and pressed something else before this arrives.
+      case 'recent': {
+        const rows = await recentSessions(message.projectPath);
+        send(client, { t: 'recent', ref: message.ref, projectPath: message.projectPath, rows });
         return;
       }
 

@@ -14,6 +14,7 @@ const { parseState, restoreState, MIN_SIZE } = require('./window-state');
 const { mirror, sweepDetached } = require('./backup');
 const { createUsageReader } = require('./usage');
 const { createSessions } = require('./sessions');
+const { recentFor } = require('./transcripts');
 const { createDevices, DEVICES_FILE } = require('./devices');
 const { createServer } = require('./server');
 const { lanAddresses, startResponder, DISCOVERY_PORT } = require('./discovery');
@@ -618,6 +619,27 @@ ipcMain.handle('sessions:list', () => sessions.list());
 ipcMain.handle('sessions:history', (_event, { id, seq }) => sessions.history(id, seq));
 
 /**
+ * The claude sessions a project has had — the sidebar's right-click menu, and
+ * the same list behind a long press on the phone.
+ *
+ * Read on the press rather than watched: it is two files, bounded in size, and
+ * a list that is a few milliseconds old at the moment it is drawn is as fresh
+ * as a list can usefully be.
+ */
+function recentSessions(projectPath) {
+  try {
+    return recentFor(projectPath);
+  } catch (err) {
+    // Claude Code owns both files and is free to change either. An empty menu
+    // is a fine way to say so; a broken sidebar is not.
+    console.error('Hangar: could not read claude history', err);
+    return [];
+  }
+}
+
+ipcMain.handle('sessions:recent', (_event, { projectPath }) => recentSessions(projectPath));
+
+/**
  * The one thing "posix_spawnp failed." is nearly always about.
  *
  * node-pty spawns every macOS pty through a helper binary rather than the shell
@@ -718,6 +740,7 @@ const server = createServer({
     return result;
   },
   usage: () => usage.get(),
+  recentSessions,
   backup: (projectPath) => (
     config.backupEnabled
       ? mirror(projectPath, { root: config.backupRoot })

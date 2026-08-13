@@ -94,6 +94,9 @@ describe('the server a phone talks to', () => {
       createProject: (name) => ({ ok: true, project: { name, path: `C:\\work\\${name}` }, projects: [] }),
       usage: async () => ({ available: false }),
       backup: async () => ({ ok: true, message: 'backed up' }),
+      recentSessions: (projectPath) => (projectPath === 'C:\\work\\demo'
+        ? [{ id: 'f1e2d3c4-0000-4000-8000-000000000001', label: 'add a sidebar', at: 1000, live: false, command: 'claude --resume f1e2d3c4-0000-4000-8000-000000000001' }]
+        : []),
       info: () => ({ app: 'Hangar', name: 'TEST-PC' }),
     });
 
@@ -196,6 +199,24 @@ describe('the server a phone talks to', () => {
     const data = await p.next('data', (m) => m.data.includes('hello'));
     expect(data.id).toBe(created.session.id);
     expect(data.seq).toBe(20);
+  });
+
+  it('tells a phone what claude has been used for in a project', async () => {
+    const p = await paired();
+    p.send({ t: 'recent', projectPath: 'C:\\work\\demo' });
+
+    const answer = await p.next('recent');
+    // The path comes back with it: a thumb can have let go and pressed another
+    // project before this arrives, and the phone has to be able to tell.
+    expect(answer.projectPath).toBe('C:\\work\\demo');
+    expect(answer.rows).toHaveLength(1);
+    expect(answer.rows[0].command).toContain('--resume');
+  });
+
+  it('answers an empty list for a project claude has never been run in', async () => {
+    const p = await paired();
+    p.send({ t: 'recent', projectPath: 'C:\\work\\somewhere-else' });
+    expect((await p.next('recent')).rows).toEqual([]);
   });
 
   it('sends only what a phone missed when it comes back', async () => {

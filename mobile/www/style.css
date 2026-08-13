@@ -449,6 +449,51 @@ input, textarea { -webkit-user-select: text; user-select: text; }
 .sheet-item:active { background: var(--tab); }
 .sheet-item.cancel { margin-top: 6px; color: var(--dim); text-align: center; }
 
+/* Nothing to tap — the line that says there is nothing here yet. */
+.sheet-item:disabled { color: var(--dim); }
+.sheet-item:disabled:active { background: none; }
+
+/* Already running, so there is nothing to resume. Dimmed rather than dropped:
+   the thing you were most recently doing here going missing from a list of
+   recent things would need more explaining than a faded row does. */
+.sheet-item.live .sheet-label { color: var(--dim); }
+
+/* A row of the resume list — what was asked, and how long ago. */
+.sheet-item.detail { display: flex; align-items: center; gap: 10px; }
+
+.sheet-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sheet-note {
+  flex: 0 0 auto;
+  color: var(--faint);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Open right now, somewhere. Green says it, the breathing draws the eye to it. */
+.sheet-live {
+  flex: 0 0 auto;
+  color: var(--st-ready);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  animation: live-pulse 2.2s ease-in-out infinite;
+}
+
+@keyframes live-pulse {
+  0%, 100% { opacity: 0.42; }
+  50% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sheet-live { animation: none; opacity: 0.85; }
+}
+
 .prompt-card { border-radius: 14px; margin: auto 12px; padding: 16px; }
 .prompt-title { margin-bottom: 12px; font-size: 17px; }
 

@@ -333,6 +333,115 @@ html, body {
   to { transform: rotate(360deg); }
 }
 
+/* ------------------------------------------------- recent claude sessions */
+
+/* Under the modals in the stack: a menu is never the most important thing on
+   screen, and one left open behind a settings card would be reachable through
+   it. Positioned from the script, which places it at the pointer. */
+.pmenu {
+  position: fixed;
+  z-index: 40;
+  width: 300px;
+  max-width: calc(100vw - 16px);
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: #171a21;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.55);
+}
+
+.pmenu[hidden] { display: none; }
+
+.pmenu-head {
+  padding: 5px 8px 6px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 4px;
+  color: var(--faint);
+  font-size: 10px;
+  line-height: 1.5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Ten rows fit; a machine with a longer memory than that scrolls rather than
+   growing a menu taller than the window. */
+.pmenu-list {
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.pmenu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 3px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pmenu-item:hover,
+.pmenu-item:focus-visible { background: #232833; outline: none; }
+
+.pmenu-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  line-height: 1.5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pmenu-when {
+  flex: 0 0 auto;
+  color: var(--faint);
+  font-size: 10px;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Already running, so there is nothing to resume — opening it again would put
+   two claudes on one transcript. Dimmed rather than hidden, because the thing
+   you were most recently doing here going missing from a list of recent things
+   would need more explaining than a greyed row does. */
+.pmenu-item.live {
+  cursor: default;
+  color: var(--dim);
+}
+
+.pmenu-item.live:hover { background: none; }
+
+.pmenu-live {
+  flex: 0 0 auto;
+  color: var(--st-ready);
+  font-size: 10px;
+  line-height: 1.5;
+  letter-spacing: 0.04em;
+  animation: live-pulse 2.2s ease-in-out infinite;
+}
+
+@keyframes live-pulse {
+  0%, 100% { opacity: 0.42; }
+  50% { opacity: 1; }
+}
+
+/* Green is the whole message; the breathing is only what draws the eye to it. */
+@media (prefers-reduced-motion: reduce) {
+  .pmenu-live { animation: none; opacity: 0.85; }
+}
+
+.pmenu-empty {
+  padding: 6px 8px 7px;
+  color: var(--faint);
+  line-height: 1.5;
+}
+
 /* --------------------------------------------------------------- modal */
 
 /* Fixed and over everything, so the terminals underneath keep running but

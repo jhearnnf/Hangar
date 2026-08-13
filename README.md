@@ -410,6 +410,22 @@ text size makes all of it fit. One tap in the ⋮ menu hands the width to the ph
 and the PC letterboxes until you hand it back. It goes back on its own when the phone
 disconnects.
 
+### Resuming from the phone
+
+Holding a project down for half a second brings up the claude sessions it has already had —
+the same list as the right-click menu in the PC's sidebar, in a bottom sheet, and answered
+by the same reader on the PC. Tapping one opens a terminal running `claude --resume` on it.
+A session that is already running is dimmed with a pulsing green **live** beside it; tapping
+it says why rather than doing nothing, since there is no tooltip to hover on a phone.
+
+The sheet goes up the moment the press registers, saying "Looking…" until the answer
+crosses the wifi, and the reply carries the project path back with it — half a second is
+long enough to have let go and pressed a different project, and the phone has to be able to
+tell which answer it is looking at.
+
+A hold is not a gesture anyone discovers, so the tap and the `+` still do what they always
+did: tap opens the project's terminal, `+` offers a plain shell or a backup.
+
 ## Starting with Windows
 
 **Settings → Startup**, two separate tick boxes:
@@ -447,6 +463,31 @@ folding away underneath it. Every project starts collapsed and is expanded by op
 terminal in it, or by the arrow. `Ctrl+Shift+E`
 hides the sidebar, and the top tab strip appears in its place — never both at once, since
 they would be listing the same terminals twice.
+
+### Picking up where you left off
+
+Right-clicking a project lists the claude sessions it has already had, newest first, named
+after the first thing you asked each one and dated by the last. Clicking one opens a
+terminal running `claude --resume` on it, so the conversation carries on rather than
+starting again.
+
+None of that is Hangar's own record — it is claude's, read on the click out of two files it
+keeps in `~/.claude`: `history.jsonl` for the prompts, and one file per running process in
+`sessions/` for what is live right now. Nothing is written back, only the last couple of
+megabytes of the history is read, and anything unrecognised in either file leaves the menu
+empty rather than breaking the sidebar; both belong to Claude Code and neither is a promise
+to us.
+
+A session that is already open — in Hangar, in another window, anywhere on the machine —
+is listed but greyed out, with a pulsing green **live** beside it. Opening it again would
+put two claudes on one transcript, both appending. Close it and it becomes clickable.
+
+The list skips the empty session ids that `/resume` leaves behind: typing `/resume` starts
+a session, records that one word against it and immediately jumps somewhere else, so the
+menu would otherwise be half full of rows that all said "/resume" and led to nothing.
+
+The phone has the same list behind a long press — see [Resuming from the
+phone](#resuming-from-the-phone). One reader on the PC answers both.
 
 A terminal that cannot start says so in the tab it would have been. A shell that fails to
 spawn, and one that exits within a second and a half of starting — a shell that isn't

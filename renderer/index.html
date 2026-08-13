@@ -62,6 +62,14 @@
   </main>
 </div>
 
+<!-- Right-clicking a project lists the claude sessions it has had, so one can be
+     picked up again. Outside #app because it is positioned against the window
+     and must not be clipped by the sidebar it springs from. -->
+<div id="projectmenu" class="pmenu" hidden role="menu" aria-label="Recent claude sessions">
+  <div id="projectmenuhead" class="pmenu-head"></div>
+  <div id="projectmenulist" class="pmenu-list"></div>
+</div>
+
 <!-- Covers the whole window, so nothing behind it can be clicked or typed at
      until the project is created or the modal is dismissed. -->
 <div id="modal" class="modal" hidden>

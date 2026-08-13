@@ -13,6 +13,10 @@ contextBridge.exposeInMainWorld('hangar', {
   listSessions: () => ipcRenderer.invoke('sessions:list'),
   history: (id, seq) => ipcRenderer.invoke('sessions:history', { id, seq }),
 
+  // Claude's own record of what has been worked on here, which is nothing to do
+  // with the terminals Hangar is running — these are the ones it is not.
+  recentSessions: (projectPath) => ipcRenderer.invoke('sessions:recent', { projectPath }),
+
   write: (id, data) => ipcRenderer.send('pty:write', { id, data }),
   resize: (id, cols, rows) => ipcRenderer.send('pty:resize', { id, cols, rows }),
   claim: (id, cols, rows) => ipcRenderer.send('pty:claim', { id, cols, rows }),

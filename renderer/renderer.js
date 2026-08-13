@@ -134,6 +134,140 @@ function paintProject(projectPath) {
   paintProjectRow(projectPath);
 }
 
+// ------------------------------------------- recent claude sessions
+
+/**
+ * Right-clicking a project lists the claude sessions it has had, so one can be
+ * picked up where it was left.
+ *
+ * These are not Hangar's terminals — Hangar's are the rows under the twisty,
+ * and they are all still running. These are claude's own, read out of the files
+ * it keeps in ~/.claude, and every one of them is a conversation that has
+ * already ended. Picking one runs `claude --resume` in a fresh terminal here.
+ */
+
+const projectMenu = $('projectmenu');
+const projectMenuHead = $('projectmenuhead');
+const projectMenuList = $('projectmenulist');
+
+// Bumped on every open and every close, so a read that comes back after the
+// menu was dismissed — or reopened on a different project — knows to say
+// nothing rather than draw a list nobody asked for any more.
+let menuToken = 0;
+
+function menuOpen() {
+  return !projectMenu.hidden;
+}
+
+function closeProjectMenu() {
+  menuToken++;
+  if (projectMenu.hidden) return;
+  projectMenu.hidden = true;
+  projectMenuList.textContent = '';
+}
+
+/** How long ago, at the granularity someone actually thinks in. */
+function ago(at) {
+  const secs = Math.max(0, Math.floor((Date.now() - at) / 1000));
+  if (secs < 90) return 'just now';
+
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+
+  return new Date(at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+}
+
+function menuRow(project, row) {
+  const item = document.createElement('button');
+  item.type = 'button';
+  item.className = 'pmenu-item' + (row.live ? ' live' : '');
+  item.setAttribute('role', 'menuitem');
+  item.innerHTML = '<span class="pmenu-label"></span>'
+    + (row.live ? '<span class="pmenu-live">live</span>' : '<span class="pmenu-when"></span>');
+  item.querySelector('.pmenu-label').textContent = row.label;
+
+  // A running session is listed and not offered. `disabled` would have been the
+  // obvious way to say so and is the wrong one: a disabled button takes no
+  // mouse events, so it could not carry the tooltip that explains itself.
+  if (row.live) {
+    item.setAttribute('aria-disabled', 'true');
+    item.tabIndex = -1;
+    item.title = `${row.label}\n\nThis one is open now. Resuming it again would put two`
+      + ` claudes on the same conversation, so it has to be closed first.`;
+    return item;
+  }
+
+  item.querySelector('.pmenu-when').textContent = ago(row.at);
+  item.title = `${row.label}\n\n${new Date(row.at).toLocaleString()}\n${row.command}`;
+  item.addEventListener('click', () => {
+    closeProjectMenu();
+    newTerminal(project, row.command);
+  });
+  return item;
+}
+
+/** Put the menu at the pointer, and inside the window wherever the pointer was. */
+function placeMenu(x, y) {
+  const gap = 8;
+  const box = projectMenu.getBoundingClientRect();
+  const left = Math.max(gap, Math.min(x, window.innerWidth - box.width - gap));
+  // Below the pointer normally, above it near the bottom of the screen — which
+  // is where the menu opens most often, since that is where a long project list
+  // reaches.
+  const below = y + box.height + gap <= window.innerHeight;
+  const top = below ? y : Math.max(gap, y - box.height);
+
+  projectMenu.style.left = `${left}px`;
+  projectMenu.style.top = `${top}px`;
+}
+
+async function openProjectMenu(project, x, y) {
+  closeProjectMenu();
+  const token = menuToken;
+
+  let rows;
+  try {
+    rows = await api.recentSessions(project.path);
+  } catch (err) {
+    console.error('Hangar: could not read claude history', err);
+    rows = [];
+  }
+  if (token !== menuToken) return;
+
+  projectMenuHead.textContent = `Recent claude sessions — ${project.name}`;
+  projectMenuList.textContent = '';
+
+  if (!rows.length) {
+    const none = document.createElement('div');
+    none.className = 'pmenu-empty';
+    none.textContent = 'Nothing to resume here yet.';
+    projectMenuList.appendChild(none);
+  }
+  for (const row of rows) projectMenuList.appendChild(menuRow(project, row));
+
+  // Shown before it is placed, because it cannot be measured while it is
+  // hidden. Both happen inside one task, so nothing is painted at the old
+  // position in between.
+  projectMenu.hidden = false;
+  placeMenu(x, y);
+}
+
+// Anything that moves what the menu is pointing at, or takes attention away
+// from it, closes it. Capture phase on the mousedown so a click aimed at
+// something else does not also have to be a click that dismisses.
+document.addEventListener('mousedown', (e) => {
+  if (menuOpen() && !projectMenu.contains(e.target)) closeProjectMenu();
+}, true);
+window.addEventListener('blur', closeProjectMenu);
+window.addEventListener('resize', closeProjectMenu);
+projectlist.addEventListener('scroll', closeProjectMenu);
+
 // ----------------------------------------------------------------- backups
 
 // A project turns green after IDLE_MS, which is short enough to happen many
@@ -380,6 +514,7 @@ function renderProject(project, wrap) {
   const row = document.createElement('div');
   row.className = 'project-row';
   row.title = `${project.path}\nDouble-click for a claude terminal (shift for a plain shell)` +
+    '\nRight-click to resume an earlier claude session' +
     (mine.length ? '\nArrow expands' : '');
   row.innerHTML =
     '<span class="twisty"></span><span class="pname"></span>' +
@@ -407,6 +542,10 @@ function renderProject(project, wrap) {
   row.querySelector('.add').addEventListener('click', (e) => {
     e.stopPropagation();
     newTerminal(project, e.shiftKey ? null : DEFAULT_COMMAND);
+  });
+  row.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    openProjectMenu(project, e.clientX, e.clientY);
   });
   wrap.appendChild(row);
 
@@ -1253,6 +1392,14 @@ window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { swallow(); closeNewProject(); return; }
     if (e.key === 'Tab') trapTab(e);
     return;
+  }
+
+  // The project menu is dismissed by anything, so it does not swallow the key
+  // that dismissed it — every shortcut below still fires, on a window that no
+  // longer has a menu floating over it.
+  if (menuOpen()) {
+    closeProjectMenu();
+    if (e.key === 'Escape') { swallow(); return; }
   }
 
   if (e.key === 'F11') { swallow(); api.toggleFullScreen(); return; }

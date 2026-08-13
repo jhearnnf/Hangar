@@ -83,6 +83,7 @@ const client = createClient({
   created: onCreated,
   projects: onProjects,
   newProject: onNewProject,
+  recent: onRecent,
   usage: onUsage,
   error: (m) => toast(m.message),
 });
@@ -350,12 +351,16 @@ function paintProjects() {
     row.querySelector('.row-count').textContent = mine.length ? String(mine.length) : '';
 
     // Tapping the row opens a claude terminal, which is what you came for.
-    // The + offers the choice, because a plain shell is the rarer want and a
-    // long-press is not a thing anyone discovers.
-    row.addEventListener('click', (e) => {
-      if (e.target.closest('.row-add')) return;
-      if (mine.length) openTerminal(mine[0].id);
-      else newTerminal(project, 'claude');
+    // The + offers the choice of a plain shell, and holding the row offers the
+    // claude sessions this project has already had — the phone's answer to the
+    // right-click menu in the PC's sidebar.
+    wireRowGestures(row, {
+      tap: (e) => {
+        if (e.target.closest('.row-add')) return;
+        if (mine.length) openTerminal(mine[0].id);
+        else newTerminal(project, 'claude');
+      },
+      hold: () => askRecent(project),
     });
     row.querySelector('.row-add').addEventListener('click', (e) => {
       e.stopPropagation();
@@ -409,6 +414,145 @@ function paintTerminals() {
     return;
   }
   for (const session of all) list.appendChild(terminalRow(session, false));
+}
+
+// ------------------------------------------- holding a project down
+
+// How long a finger has to stay put. Android's own long press is around half a
+// second, so this is what a thumb already expects.
+const HOLD_MS = 500;
+
+// A finger resting on a screen still moves a little. Past this it was a scroll,
+// and a list that opened a menu every time it was flicked would be unusable.
+const HOLD_SLOP = 10;
+
+/**
+ * Give a row both gestures: a tap and a hold.
+ *
+ * Both live in here rather than in two listeners because only one of them can
+ * win, and the losing one has to be swallowed — a hold that opened its menu and
+ * then let the tap through would open a terminal behind it. The browser sends
+ * the click after the finger lifts either way, so the hold marks itself as
+ * having happened and the click is dropped.
+ *
+ * `contextmenu` is wired to the same thing, which is what a WebView fires on a
+ * long press when it decides to, and what a right-click sends in the desktop
+ * browser this client is also served to. Both routes go through `fire`, which
+ * only lets the first of them through.
+ */
+function wireRowGestures(el, { tap, hold }) {
+  let timer = null;
+  let from = null;
+  let held = false;
+
+  const cancel = () => { clearTimeout(timer); timer = null; };
+
+  const fire = () => {
+    if (held) return;
+    held = true;
+    cancel();
+    // The little bump that says the press registered. Not every phone has one,
+    // and a browser will not have the API at all.
+    if (navigator.vibrate) navigator.vibrate(12);
+    hold();
+  };
+
+  // A button inside the row is its own thing with its own action, so holding
+  // one is not holding the row — otherwise resting a thumb on `+` would open
+  // the resume list behind the menu it was already opening.
+  const onButton = (e) => Boolean(e.target.closest && e.target.closest('button'));
+
+  el.addEventListener('touchstart', (e) => {
+    held = false;
+    cancel();
+    if (e.touches.length !== 1 || onButton(e)) return;
+    from = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    timer = setTimeout(fire, HOLD_MS);
+  }, { passive: true });
+
+  el.addEventListener('touchmove', (e) => {
+    if (!timer || !e.touches.length) return;
+    const dx = e.touches[0].clientX - from.x;
+    const dy = e.touches[0].clientY - from.y;
+    if (Math.hypot(dx, dy) > HOLD_SLOP) cancel();
+  }, { passive: true });
+
+  el.addEventListener('touchend', cancel, { passive: true });
+  el.addEventListener('touchcancel', cancel, { passive: true });
+
+  // A mouse, in the browser the PC also serves this page to.
+  el.addEventListener('mousedown', () => { held = false; });
+  el.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    if (!onButton(e)) fire();
+  });
+
+  el.addEventListener('click', (e) => {
+    if (held) return;   // the hold already answered this press
+    tap(e);
+  });
+}
+
+/** How long ago, at the granularity someone actually thinks in. */
+function ago(at) {
+  const secs = Math.max(0, Math.floor((Date.now() - at) / 1000));
+  if (secs < 90) return 'just now';
+
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m`;
+
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h`;
+
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d`;
+
+  return new Date(at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+}
+
+// Which project the sheet on screen is waiting on an answer for. The PC reads
+// two files to answer, and over wifi that is long enough for a thumb to have
+// let go and pressed something else.
+let recentWaiting = null;
+
+function recentTitle(project) {
+  return `Resume claude in ${project.name}`;
+}
+
+function askRecent(project) {
+  recentWaiting = project;
+  client.send({ t: 'recent', projectPath: project.path });
+  // The sheet goes up straight away, so the press is visibly acknowledged
+  // rather than appearing to have missed for as long as the round trip takes.
+  sheet(recentTitle(project), [{ label: 'Looking…' }]);
+}
+
+function onRecent(message) {
+  const project = recentWaiting;
+  if (!project || message.projectPath !== project.path) return;
+  recentWaiting = null;
+  // Dismissed while we were asking, which is an answer of its own.
+  if ($('sheet').hidden) return;
+
+  const rows = message.rows || [];
+  if (!rows.length) {
+    sheet(recentTitle(project), [{ label: 'Nothing to resume here yet.' }]);
+    return;
+  }
+
+  sheet(recentTitle(project), rows.map((row) => ({
+    label: row.label,
+    note: ago(row.at),
+    live: row.live,
+    // A session that is already running is shown and not resumed: opening it
+    // again would put two claudes on the one conversation, both appending.
+    // It still answers the tap, because a row that did nothing at all on a
+    // phone — where there is no tooltip to hover for the reason — would just
+    // look broken.
+    run: row.live
+      ? () => toast('That one is open already. Close it and it can be resumed.')
+      : () => newTerminal(project, row.command),
+  })));
 }
 
 function newTerminal(project, command) {
@@ -942,6 +1086,15 @@ function applyInputMode() {
 
 // ------------------------------------------------------------- the ⋮ menu
 
+/**
+ * The bottom sheet, which is this app's only menu.
+ *
+ * An item is `{ label, run }` at its simplest. Two extras exist for the list of
+ * past claude sessions, which needs more than a line of text per row: `note`
+ * puts a quiet second column on the right — how long ago it was — and `live`
+ * replaces that with a pulsing green mark. An item with no `run` cannot be
+ * tapped, which is how both a live session and an empty list are said.
+ */
 function sheet(title, items) {
   const box = $('sheetitems');
   box.textContent = '';
@@ -953,12 +1106,26 @@ function sheet(title, items) {
 
   for (const item of items) {
     const button = document.createElement('button');
-    button.className = 'sheet-item';
-    button.textContent = item.label;
-    button.addEventListener('click', () => {
-      $('sheet').hidden = true;
-      item.run();
-    });
+    const detail = Boolean(item.note || item.live);
+    button.className = 'sheet-item' + (detail ? ' detail' : '') + (item.live ? ' live' : '');
+
+    if (detail) {
+      button.innerHTML = '<span class="sheet-label"></span>'
+        + (item.live ? '<span class="sheet-live">live</span>' : '<span class="sheet-note"></span>');
+      button.querySelector('.sheet-label').textContent = item.label;
+      if (!item.live) button.querySelector('.sheet-note').textContent = item.note;
+    } else {
+      button.textContent = item.label;
+    }
+
+    if (item.run) {
+      button.addEventListener('click', () => {
+        $('sheet').hidden = true;
+        item.run();
+      });
+    } else {
+      button.disabled = true;
+    }
     box.appendChild(button);
   }
   $('sheet').hidden = false;
