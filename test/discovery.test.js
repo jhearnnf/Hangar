@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { lanAddresses, addressKind, isPrivateAddress } from '../discovery.js';
-import { loginItem, startedHidden, HIDDEN_FLAG } from '../startup.js';
+import { loginItem, startedHidden, isPackagedLayout, HIDDEN_FLAG } from '../startup.js';
 
 describe('isPrivateAddress', () => {
   it('recognises the ranges a home network uses', () => {
@@ -133,8 +133,32 @@ describe('loginItem', () => {
   });
 
   it('a packaged build is the app, and takes no folder', () => {
-    const item = loginItem({ execPath: 'C:\\Program Files\\Hangar\\Hangar.exe', appPath, packaged: true });
+    const item = loginItem({
+      execPath: 'C:\\Program Files\\Hangar\\Hangar.exe',
+      appPath: 'C:\\Program Files\\Hangar\\resources\\app.asar',
+    });
     expect(item.args).toEqual([]);
+  });
+
+  // The bug this guards: `app.isPackaged` is true for any exe not called
+  // electron.exe, so the icon-stamped copy looked packaged and the startup
+  // entry went out as `Hangar.exe --hidden` — Electron's welcome window.
+  it('the icon-stamped copy still carries the folder, packaged though it looks', () => {
+    const item = loginItem({ execPath: branded, appPath, hidden: true, exists: (p) => p === branded });
+    expect(item.path).toBe(branded);
+    expect(item.args).toEqual([appPath, HIDDEN_FLAG]);
+  });
+});
+
+describe('isPackagedLayout', () => {
+  it('is the app living inside the exe folder, not the exe being renamed', () => {
+    expect(isPackagedLayout('C:\\Program Files\\Hangar\\Hangar.exe',
+      'C:\\Program Files\\Hangar\\resources\\app.asar')).toBe(true);
+
+    // A checkout: the exe is buried in node_modules, the folder sits above it.
+    expect(isPackagedLayout(
+      'C:\\Users\\you\\Projects\\Hangar\\node_modules\\electron\\dist\\Hangar.exe',
+      'C:\\Users\\you\\Projects\\Hangar')).toBe(false);
   });
 });
 

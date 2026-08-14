@@ -120,10 +120,12 @@ function applyStartup(current) {
   if (process.platform === 'linux') return;   // no login-item API there
 
   try {
+    // No `packaged:` here on purpose — `app.isPackaged` only means "the exe is
+    // not called electron.exe", which is true of the icon-stamped copy too.
+    // startup.js works it out from where the app sits relative to the exe.
     const item = loginItem({
       execPath: process.execPath,
       appPath: app.getAppPath(),
-      packaged: app.isPackaged,
       hidden: current.startMinimised,
     });
     app.setLoginItemSettings({ openAtLogin: current.autoStart, path: item.path, args: item.args });

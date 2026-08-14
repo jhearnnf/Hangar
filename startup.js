@@ -32,10 +32,28 @@ const path = require('path');
 // Windows started it*, or opening Hangar yourself would appear to do nothing.
 const HIDDEN_FLAG = '--hidden';
 
+/**
+ * Whether the exe *is* the app, rather than an Electron running a folder.
+ *
+ * Not `app.isPackaged`, which on Windows means no more than "the exe is not
+ * called electron.exe" — and `npm run exe` renames it to Hangar.exe precisely
+ * so the startup list says Hangar. Believing it there wrote an entry with the
+ * folder left off, which is an Electron welcome window every morning.
+ *
+ * The layout answers it honestly instead: a packaged build keeps its app
+ * inside the exe's own folder (`resources/app.asar`), while a checkout's exe
+ * lives down in `node_modules` and the folder it is handed sits above it.
+ */
+function isPackagedLayout(execPath, appPath) {
+  if (!execPath || !appPath) return false;
+  const within = path.relative(path.dirname(execPath), appPath);
+  return within !== '' && !within.startsWith('..') && !path.isAbsolute(within);
+}
+
 function loginItem({
   execPath,
   appPath,
-  packaged = false,
+  packaged = isPackagedLayout(execPath, appPath),
   hidden = false,
   exists = fs.existsSync,
 } = {}) {
@@ -60,4 +78,4 @@ function startedHidden(argv = process.argv) {
   return argv.includes(HIDDEN_FLAG);
 }
 
-module.exports = { loginItem, startedHidden, HIDDEN_FLAG };
+module.exports = { loginItem, startedHidden, isPackagedLayout, HIDDEN_FLAG };
