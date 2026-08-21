@@ -502,7 +502,7 @@ html, body {
   line-height: 1.5;
 }
 
-/* The one item that is not a session, kept apart from the ones that are. */
+/* The two items that are not sessions, kept apart from the ones that are. */
 .pmenu-foot {
   border-top: 1px solid var(--line);
   margin-top: 4px;
@@ -516,13 +516,15 @@ html, body {
 
 /* Greyed while a terminal is open in the project, with the reason in the
    tooltip — same treatment as a session that is already running, and for the
-   same reason: an item that vanished would look like a missing feature. */
-.pmenu-item.danger[aria-disabled="true"] {
+   same reason: an item that vanished would look like a missing feature.
+   Scoped to the foot so it outranks the red the delete is otherwise painted
+   in, and leaves the live sessions in the list above their own grey. */
+.pmenu-foot .pmenu-item[aria-disabled="true"] {
   color: var(--faint);
   cursor: default;
 }
 
-.pmenu-item.danger[aria-disabled="true"]:hover { background: none; }
+.pmenu-foot .pmenu-item[aria-disabled="true"]:hover { background: none; }
 
 /* --------------------------------------------------------------- modal */
 
@@ -663,6 +665,16 @@ html, body {
 }
 
 .del-ask b { color: var(--text); font-weight: 600; }
+
+/* What a folder rename does not take with it. Small and under the field
+   rather than above it: it is the thing to read before pressing the button,
+   not the thing the card is about. */
+.ren-note {
+  margin-top: 2px;
+  color: var(--faint);
+  font-size: 10px;
+  line-height: 1.5;
+}
 
 /* ---------------------------------------------------- processes panel */
 

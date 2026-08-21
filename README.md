@@ -497,12 +497,39 @@ menu would otherwise be half full of rows that all said "/resume" and led to not
 The phone has the same list behind a long press — see [Resuming from the
 phone](#resuming-from-the-phone). One reader on the PC answers both.
 
-### Deleting a project
+### Renaming a project
 
 Under the same right-click menu, below a line and away from everything that opens a
-terminal, is **Delete <project>**. It asks for the word *delete* to be typed rather than
-for a second click, because a click is what every other button in Hangar takes and this is
-the one thing clicking again does not undo.
+terminal, is **Rename <project>**. It opens a card holding the name the folder already
+has, selected and ready to be typed over; `Enter` renames, `Esc` or the backdrop backs
+out. The button stays dead until the name is both valid and different, so the card cannot
+be used to rename a project to itself.
+
+It is a folder rename and nothing else — one `fs.rename`, which the filesystem either does
+or refuses, so a project can never end up half moved. What it deliberately does not do is
+chase the old path through other programs' files, and the card says so before you press
+the button: claude finds the sessions this menu lists by the folder they were run in, so
+there will be none to resume under the new name (claude's own `/resume` still has all of
+them), and any backup already mirrored stays under the old name while the next one makes a
+fresh copy.
+
+The rules for the new name are the new-project rules, run again — see [New
+projects](#new-projects) — with one addition: the folder's own name is not something for
+it to clash with, so `hangar` to `Hangar` is a rename this happily makes rather than a
+name already taken. Windows agrees, since the two are the same folder to it.
+
+As with the delete, the offer is withdrawn while a terminal is open in the project. A live
+shell holds its own directory open, so the rename fails outright — and every terminal,
+countdown and badge in Hangar is remembered by path, so a folder moving under one is not
+worth being clever about. The item is greyed with the count in its tooltip until they are
+closed, and every check runs again in the main process before anything moves
+(`project-rename.js`, tested in `test/project-rename.test.js`).
+
+### Deleting a project
+
+Last in that menu, under the rename, is **Delete <project>**. It asks for the word
+*delete* to be typed rather than for a second click, because a click is what every other
+button in Hangar takes and this is the one thing clicking again does not undo.
 
 The folder goes to the recycle bin, not off the disk, so a mistake is a trip to the bin
 rather than a restore from backup — and any backup Hangar has already mirrored is left

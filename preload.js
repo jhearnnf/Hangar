@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('hangar', {
   listProjects: () => ipcRenderer.invoke('projects:list'),
   createProject: (name) => ipcRenderer.invoke('projects:create', { name }),
   deleteProject: (projectPath) => ipcRenderer.invoke('projects:delete', { projectPath }),
+  renameProject: (projectPath, name) => ipcRenderer.invoke('projects:rename', { projectPath, name }),
 
   // Only ever used to name things the way this machine names them — the
   // recycle bin, which is a wastebasket somewhere else.

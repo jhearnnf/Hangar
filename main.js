@@ -11,6 +11,7 @@ const pty = require('node-pty');
 const { defaultShell, argsFor, listProjects, PROJECT_IGNORE } = require('./shell');
 const { validateProjectName } = require('./project-name');
 const { checkProjectDelete } = require('./project-delete');
+const { checkProjectRename } = require('./project-rename');
 const { parseState, restoreState, MIN_SIZE } = require('./window-state');
 const { mirror, sweepDetached } = require('./backup');
 const { createUsageReader } = require('./usage');
@@ -517,6 +518,83 @@ ipcMain.handle('projects:delete', async (_event, { projectPath }) => {
   const result = await removeProject(projectPath);
   // Same as creating one: a phone looking at the same folder is now looking at
   // a project that is gone.
+  if (result.ok) server.broadcastProjects();
+  return result;
+});
+
+// A rename that only changes case points at the same folder on a filesystem
+// that does not care about case, so "there is already one of those" would be
+// the folder itself. Everywhere else two names differing only in case really
+// are two folders, and one of them is not to be moved over.
+const CASE_BLIND = process.platform === 'win32' || process.platform === 'darwin';
+
+/**
+ * Give a project folder a different name.
+ *
+ * Nothing else moves with it. Hangar's own bookkeeping is all keyed by path —
+ * the terminals, the backup countdowns, claude's record of what has been asked
+ * in this folder — which is why the rename is refused while a terminal is open
+ * and why the dialog says what stops matching afterwards. The alternative is
+ * rewriting other programs' files on the strength of a text field, which is not
+ * an offer Hangar is in a position to make.
+ *
+ * `fs.renameSync` rather than a copy and a delete: it is one operation the
+ * filesystem either does or refuses, so a folder can never end up half moved.
+ */
+function renameProject(target, name) {
+  const root = path.resolve(projectsRoot());
+  const check = checkProjectRename(target, name, {
+    root,
+    appDir: __dirname,
+    busy: terminalsIn(target),
+    existing: listProjects(root).map((p) => p.name),
+    ignored: [...PROJECT_IGNORE],
+  });
+  if (!check.ok) return check;
+
+  let stat;
+  try {
+    stat = fs.statSync(check.from);
+  } catch (err) {
+    if (err.code === 'ENOENT') return { ok: false, message: 'That folder is not there any more.' };
+    return { ok: false, message: `Could not read the folder: ${err.message}` };
+  }
+  if (!stat.isDirectory()) return { ok: false, message: 'That is a file, not a project folder.' };
+
+  // The listing the name was checked against skips hidden folders and
+  // node_modules, so a clash with one of those would otherwise be found out
+  // about by `rename` — or, on a bad day, not found out about at all.
+  const caseOnly = CASE_BLIND && check.to.toLowerCase() === check.from.toLowerCase();
+  if (!caseOnly && fs.existsSync(check.to)) {
+    return { ok: false, message: 'There is already a folder with that name.' };
+  }
+
+  try {
+    fs.renameSync(check.from, check.to);
+  } catch (err) {
+    if (err.code === 'EEXIST' || err.code === 'ENOTEMPTY') {
+      return { ok: false, message: 'There is already a folder with that name.' };
+    }
+    if (err.code === 'EPERM' || err.code === 'EACCES' || err.code === 'EBUSY') {
+      // Almost always something holding the folder open — an editor, a shell
+      // outside Hangar, a virus scanner mid-file.
+      return { ok: false, message: `Something has the folder open, so it could not be renamed: ${err.message}` };
+    }
+    return { ok: false, message: `Could not rename the folder: ${err.message}` };
+  }
+
+  return {
+    ok: true,
+    project: { name: check.name, path: check.to },
+    was: { name: check.was, path: check.from },
+    ...projectListing(),
+  };
+}
+
+ipcMain.handle('projects:rename', (_event, { projectPath, name }) => {
+  const result = renameProject(projectPath, name);
+  // A project that changed its name is news to every phone looking at the same
+  // folder, exactly as one appearing or going away is.
   if (result.ok) server.broadcastProjects();
   return result;
 });

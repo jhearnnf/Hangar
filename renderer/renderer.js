@@ -149,10 +149,11 @@ function paintProject(projectPath) {
 const projectMenu = $('projectmenu');
 const projectMenuHead = $('projectmenuhead');
 const projectMenuList = $('projectmenulist');
+const projectRename = $('projectrename');
 const projectDelete = $('projectdelete');
 
-// Which project the open menu is about. The delete item is a fixed piece of
-// the menu rather than one built per open, so it has to be told.
+// Which project the open menu is about. The rename and the delete are fixed
+// pieces of the menu rather than rows built per open, so they have to be told.
 let menuProject = null;
 
 // Bumped on every open and every close, so a read that comes back after the
@@ -249,6 +250,7 @@ async function openProjectMenu(project, x, y) {
   menuProject = project;
   projectMenuHead.textContent = `Recent claude sessions — ${project.name}`;
   projectMenuList.textContent = '';
+  paintRenameItem(project);
   paintDeleteItem(project);
 
   if (!rows.length) {
@@ -275,6 +277,47 @@ document.addEventListener('mousedown', (e) => {
 window.addEventListener('blur', closeProjectMenu);
 window.addEventListener('resize', closeProjectMenu);
 projectlist.addEventListener('scroll', closeProjectMenu);
+
+/**
+ * Offer the rename, or say why it is not being offered.
+ *
+ * Refused while a terminal is open in the folder for a blunter reason than the
+ * delete's: on Windows the rename of a directory a live shell is sitting in
+ * simply fails, and everything Hangar knows about that terminal — its project,
+ * its backup countdown — is remembered by the path that would have moved.
+ */
+function paintRenameItem(project) {
+  const open = terminalsIn(project.path).length;
+  const label = projectRename.querySelector('.pmenu-label');
+
+  if (open) {
+    projectRename.setAttribute('aria-disabled', 'true');
+    projectRename.tabIndex = -1;
+    label.textContent = 'Rename project…';
+    projectRename.title = open === 1
+      ? `${project.name}
+
+A terminal is still open here. Close it first.`
+      : `${project.name}
+
+${open} terminals are still open here. Close them first.`;
+    return;
+  }
+
+  projectRename.removeAttribute('aria-disabled');
+  projectRename.tabIndex = 0;
+  label.textContent = `Rename ${project.name}…`;
+  projectRename.title = `${project.path}
+
+Renames the folder on disk.`;
+}
+
+projectRename.addEventListener('click', () => {
+  if (projectRename.getAttribute('aria-disabled') === 'true') return;
+  const project = menuProject;
+  closeProjectMenu();
+  if (project) openRenameProject(project);
+});
 
 /**
  * Offer the delete, or say why it is not being offered.
@@ -564,7 +607,7 @@ function renderProject(project, wrap) {
   const row = document.createElement('div');
   row.className = 'project-row';
   row.title = `${project.path}\nDouble-click for a claude terminal (shift for a plain shell)` +
-    '\nRight-click to resume an earlier claude session, or delete the project' +
+    '\nRight-click to resume an earlier claude session, or rename or delete the project' +
     (mine.length ? '\nArrow expands' : '');
   row.innerHTML =
     '<span class="twisty"></span><span class="pname"></span>' +
@@ -824,6 +867,176 @@ modalCancel.addEventListener('click', closeNewProject);
 // release.
 modal.addEventListener('mousedown', (e) => {
   if (e.target === modal) closeNewProject();
+});
+
+// --------------------------------------------------------- rename project
+
+/**
+ * Give a project a different name.
+ *
+ * It is a folder rename and nothing else. Two things elsewhere are keyed by the
+ * old path and quietly stop matching, so the card says both rather than leaving
+ * them to be discovered: claude's record of what has been asked in this folder,
+ * which is what the menu this was opened from lists, and whatever is already
+ * sitting in the backup folder under the old name.
+ */
+
+const ren = $('ren');
+const renPath = $('renpath');
+const renName = $('renname');
+const renError = $('renerror');
+const renNote = $('rennote');
+const renConfirm = $('renconfirm');
+const renCancel = $('rencancel');
+
+const RENAME_LABEL = 'Rename folder';
+
+let renaming = null;      // the project this dialog is about, while it is up
+let renamingNow = false;
+let renReturn = null;
+
+function renameOpen() {
+  return !ren.hidden;
+}
+
+function openRenameProject(project) {
+  if (renameOpen()) return;
+
+  renaming = project;
+  renamingNow = false;
+  renReturn = document.activeElement;
+
+  renPath.textContent = project.path;
+  renPath.title = project.path;
+  renName.value = project.name;
+  renError.textContent = '';
+  renConfirm.textContent = RENAME_LABEL;
+
+  // The backup half only while there is a backup folder for it to be true of.
+  renNote.textContent = 'The claude sessions offered for this project are found by folder path,'
+    + ' so there will be none to resume under the new name — claude’s own /resume still has them.'
+    + (backupsOn ? ' Anything already backed up stays under the old name, and the next backup makes a fresh copy.' : '');
+
+  checkRename();
+
+  ren.hidden = false;
+  renName.focus();
+  // The field opens holding the name it already has, which is there to be read
+  // and then typed over.
+  renName.select();
+}
+
+function closeRenameProject() {
+  if (!renameOpen()) return;
+  ren.hidden = true;
+  renaming = null;
+
+  const tab = tabs.get(activeId);
+  if (tab) tab.term.focus();
+  else if (renReturn && renReturn.focus) renReturn.focus();
+  renReturn = null;
+}
+
+/**
+ * Run the name rules over what has been typed, the same way the new-project
+ * modal does, leaving the button and the message line saying the same thing.
+ *
+ * The folder's own name is filtered out of what it can clash with — otherwise
+ * the field would open complaining that the project it is renaming exists — and
+ * that same name leaves the button dead rather than red, since a name unchanged
+ * so far is not a mistake, only nothing to do yet.
+ */
+function checkRename() {
+  const raw = renName.value;
+  const current = renaming ? renaming.name : '';
+  const result = ProjectName.validateProjectName(raw, {
+    existing: projects.map((p) => p.name).filter((n) => n.toLowerCase() !== current.toLowerCase()),
+    ignored: ignoredNames,
+  });
+
+  const unchanged = result.ok && result.name === current;
+  renConfirm.disabled = renamingNow || !result.ok || unchanged;
+  renError.textContent = raw.trim() && !result.ok ? result.message : '';
+  return unchanged ? { ok: false, message: `It is already called ${current}.` } : result;
+}
+
+async function submitRenameProject() {
+  if (renamingNow || !renaming) return;
+
+  const check = checkRename();
+  if (!check.ok) {
+    renError.textContent = check.message;
+    renName.focus();
+    return;
+  }
+
+  const project = renaming;
+  renamingNow = true;
+  renConfirm.disabled = true;
+  renConfirm.textContent = 'Renaming\u2026';
+
+  let result;
+  try {
+    result = await api.renameProject(project.path, check.name);
+  } catch (err) {
+    result = { ok: false, message: err.message };
+  }
+
+  renamingNow = false;
+  renConfirm.textContent = RENAME_LABEL;
+
+  if (!result.ok) {
+    // The main process runs the same rules again and is the side that moved
+    // the folder, so its answer replaces whatever the field made of it.
+    checkRename();
+    renError.textContent = result.message;
+    renName.focus();
+    renName.select();
+    return;
+  }
+
+  // Nothing carries across. Every countdown and badge in here is remembered by
+  // path, and none of them is true of the new one: the backup under the old
+  // name is not this project's any more, and a countdown left armed would ask
+  // the main process to mirror a folder that has moved.
+  forgetProject(project.path);
+  // The refreshed listing comes back with it, so the sidebar is rebuilt from
+  // what is really on disk rather than from a row renamed on trust.
+  projects = result.projects;
+  renderSidebar();
+  closeRenameProject();
+
+  const row = projectRows.get(result.project.path);
+  if (row) row.scrollIntoView({ block: 'nearest' });
+}
+
+/** Keep Tab inside the dialog, the same way the other two do. */
+function trapRenameTab(e) {
+  const stops = [renName, renCancel, renConfirm].filter((el) => !el.disabled);
+  const i = stops.indexOf(document.activeElement);
+  const next = e.shiftKey ? i - 1 : i + 1;
+  if (i !== -1 && next >= 0 && next < stops.length) return;
+
+  e.preventDefault();
+  e.stopPropagation();
+  stops[e.shiftKey ? stops.length - 1 : 0].focus();
+}
+
+renName.addEventListener('input', () => checkRename());
+renName.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  submitRenameProject();
+});
+
+renConfirm.addEventListener('click', submitRenameProject);
+renCancel.addEventListener('click', closeRenameProject);
+
+// Only when the press started on the backdrop, so a selection dragged out of
+// the field does not dismiss on release. Not while the rename is in flight:
+// the answer still has to land somewhere.
+ren.addEventListener('mousedown', (e) => {
+  if (e.target === ren && !renamingNow) closeRenameProject();
 });
 
 // --------------------------------------------------------- delete project
@@ -1612,6 +1825,15 @@ window.addEventListener('keydown', (e) => {
     return;
   }
 
+  // Same handling as the delete below, for the same reason: Escape backs out
+  // right up until the answer is asked for, and does nothing once it is on its
+  // way back.
+  if (renameOpen()) {
+    if (e.key === 'Escape') { swallow(); if (!renamingNow) closeRenameProject(); return; }
+    if (e.key === 'Tab') trapRenameTab(e);
+    return;
+  }
+
   // Escape backs out of the delete right up until it is asked for; once it is
   // in flight there is nothing left to cancel, so the key does nothing rather
   // than closing a dialog whose answer is still coming.
@@ -1694,6 +1916,7 @@ window.addEventListener('focus', () => {
   const tab = tabs.get(activeId);
   if (setupOpen()) { /* the card holds its own focus */ }
   else if (modalOpen()) modalName.focus();
+  else if (renameOpen()) renName.focus();
   else if (deleteOpen()) delWord.focus();
   else if (tab && findBar.hidden) tab.term.focus();
 
