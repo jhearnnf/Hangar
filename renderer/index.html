@@ -10,6 +10,18 @@
       <button id="sidecollapse" class="icon" title="Hide projects (Ctrl+Shift+E)">&#171;</button>
     </div>
     <div id="projectlist" class="projectlist"></div>
+    <!-- What the machine is doing right now, which is a different question from
+         the usage bars below it: those are how much Claude you have left, this
+         is what the terminals are costing while they use it. Click for the
+         processes behind the line. -->
+    <button id="spark" class="spark" title="What the terminals are running (Ctrl+Shift+P)">
+      <canvas id="sparkcanvas" class="spark-canvas"></canvas>
+      <span class="spark-legend">
+        <span class="spark-key cpu">cpu <b id="sparkcpu">—</b></span>
+        <span class="spark-key mem">ram <b id="sparkmem">—</b></span>
+      </span>
+    </button>
+
     <div id="usage" class="usage" hidden>
       <div class="usage-row">
         <span class="usage-name">5h</span>

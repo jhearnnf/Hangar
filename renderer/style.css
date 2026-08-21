@@ -82,6 +82,63 @@ html, body {
 
 /* Sits directly above the hint line, sharing its muted register so the sidebar
    still ends quietly rather than in a status panel. */
+/* ------------------------------------------------------- the sparkline */
+
+/* A button rather than a div, because it opens something — which means it gets
+   the focus ring and the Enter key for nothing. */
+.spark {
+  flex: 0 0 auto;
+  display: block;
+  width: 100%;
+  padding: 8px 12px 6px;
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.spark:hover { background: #10131a; }
+.spark:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+
+.spark-canvas {
+  display: block;
+  width: 100%;
+  height: 26px;
+}
+
+.spark-legend {
+  display: flex;
+  gap: 10px;
+  margin-top: 3px;
+  color: var(--faint);
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+/* The dot in front of each key is the colour of that line on the chart, which
+   is the whole of the legend — there is no room for anything more. */
+.spark-key::before {
+  content: '';
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-right: 4px;
+  border-radius: 50%;
+  vertical-align: middle;
+}
+
+.spark-key.cpu::before { background: var(--accent); }
+.spark-key.mem::before { background: var(--dim); }
+
+.spark-key b {
+  color: var(--dim);
+  font-weight: normal;
+  font-variant-numeric: tabular-nums;
+}
+
 .usage {
   flex: 0 0 auto;
   display: flex;
@@ -260,8 +317,11 @@ html, body {
 .termlist { display: none; }
 .project.open .termlist { display: block; }
 
+/* Clear of the project name rather than level with it — at 26px the dot began
+   where the name above it did, so a terminal read as a sibling of its project
+   instead of something inside it. */
 .term-row {
-  padding-left: 26px;
+  padding-left: 38px;
   color: var(--dim);
 }
 
@@ -548,6 +608,198 @@ html, body {
   background: #191c23;
   color: var(--faint);
   cursor: default;
+}
+
+
+/* ---------------------------------------------------- processes panel */
+
+/* Wider than the setup card and taller, because it is a list rather than a
+   form: the thing being read is the left-hand column, and the numbers on the
+   right have to line up down the whole of it. */
+
+.procs-card {
+  width: 640px;
+  max-height: calc(100vh - 64px);
+  display: flex;
+  flex-direction: column;
+}
+
+.procs-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.procs-heading { flex: 1 1 auto; min-width: 0; }
+
+.procs-gpu {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--dim);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.procs-gpu[hidden] { display: none; }
+.procs-gpu input { margin: 0; cursor: pointer; }
+
+/* The panel opens with this focused so Esc and Tab have somewhere to start, and
+   the ring the browser draws by default for that is louder than anything else
+   on the card. */
+.procs-head .icon:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: 3px;
+}
+
+.procs-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  margin-top: 12px;
+  min-height: 120px;
+}
+
+.proc-empty {
+  margin: 0;
+  padding: 24px 4px;
+  color: var(--faint);
+  font-size: 11px;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.proc-session { margin-bottom: 10px; }
+
+.proc-session-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 6px;
+  color: var(--dim);
+  font-size: 10px;
+}
+
+.proc-session-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.proc-session-project {
+  flex: 0 0 auto;
+  color: var(--faint);
+  font-size: 9px;
+}
+
+/* One grid for every row at every depth, so the numbers stay in their columns
+   however deeply the tree is expanded. The label is the only elastic part. */
+.proc-row {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) 28px 46px 62px;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+}
+
+.with-gpu .proc-row { grid-template-columns: 14px minmax(0, 1fr) 28px 46px 46px 62px; }
+
+button.proc-row { cursor: pointer; }
+button.proc-row:hover { background: #1a1e26; }
+.proc-row.child { color: var(--dim); }
+
+.proc-row.head {
+  padding-bottom: 5px;
+  border-bottom: 1px solid var(--line);
+}
+
+.proc-row.head .proc-metric {
+  color: var(--faint);
+  font-size: 9px;
+}
+
+.proc-twist {
+  color: var(--faint);
+  font-size: 10px;
+  text-align: center;
+}
+
+.proc-twist.none { visibility: hidden; }
+
+.proc-label {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.proc-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+/* The one thing on the row worth colouring: a port is what you type into a
+   browser, and finding it is half of why anyone opens this. */
+.proc-port {
+  flex: 0 0 auto;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: #16233a;
+  color: var(--accent);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+.proc-count {
+  color: var(--faint);
+  font-size: 9px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.proc-metric {
+  color: var(--dim);
+  font-size: 10px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Nothing to say is said quietly, so a column of zeroes does not compete with
+   the one row that is actually working. */
+.proc-metric.zero { color: var(--faint); }
+.proc-metric.hot { color: var(--st-implementing); }
+
+.proc-kids {
+  margin: 1px 0 3px 14px;
+  border-left: 1px solid var(--line);
+  padding-left: 6px;
+}
+
+.procs-foot {
+  flex: 0 0 auto;
+  margin: 10px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  color: var(--faint);
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.procs-foot code {
+  padding: 0 3px;
+  border-radius: 2px;
+  background: #191c23;
+  font-size: 10px;
 }
 
 /* --------------------------------------------------------------- setup */

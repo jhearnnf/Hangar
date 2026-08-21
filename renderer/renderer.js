@@ -1416,6 +1416,7 @@ window.addEventListener('keydown', (e) => {
       case 'KeyE': swallow(); toggleSidebar(); return;
       case 'KeyB': swallow(); zen = !zen; syncChrome(); return;
       case 'KeyF': swallow(); openFind(); return;
+      case 'KeyP': swallow(); openProcs(); return;
       case 'KeyC': swallow(); copySelection(); return;
       case 'KeyV': swallow(); pasteClipboard(); return;
       case 'KeyK': {
@@ -1554,6 +1555,343 @@ async function refreshUsage() {
 
   usageNote.textContent = parts.join(' · ');
 }
+
+// ----------------------------------------------------------------- resources
+
+/**
+ * The line above the usage bars, and the panel behind it.
+ *
+ * The usage bars answer "how much Claude is left"; this answers "what is that
+ * costing right now", which is the question a terminal that has been quiet for
+ * ten minutes while a fan spins up cannot answer on its own.
+ *
+ * Drawing it costs one `os.cpus()` read in the main process, so it runs the
+ * whole time the window is up. What it opens is not free and does not.
+ */
+
+const spark = $('spark');
+const sparkCanvas = $('sparkcanvas');
+const sparkCpu = $('sparkcpu');
+const sparkMem = $('sparkmem');
+
+// A couple of minutes of history at the tick below, which is as much as a line
+// this size can say anything with.
+const SPARK_POINTS = 60;
+const SPARK_TICK_MS = 2000;
+
+const history = { cpu: [], mem: [] };
+
+function pushPoint(series, value) {
+  series.push(value);
+  if (series.length > SPARK_POINTS) series.shift();
+}
+
+/**
+ * Two filled lines on one grid, both 0-100, so they can share an axis without
+ * either needing a label. CPU is the accent colour and drawn last, because it
+ * is the one that moves; memory sits behind it as the slower, calmer shape.
+ */
+function drawSpark() {
+  const dpr = window.devicePixelRatio || 1;
+  const w = sparkCanvas.clientWidth;
+  const h = sparkCanvas.clientHeight;
+  if (!w || !h) return; // the sidebar is hidden; nothing to draw on
+
+  if (sparkCanvas.width !== w * dpr || sparkCanvas.height !== h * dpr) {
+    sparkCanvas.width = w * dpr;
+    sparkCanvas.height = h * dpr;
+  }
+
+  const ctx = sparkCanvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+
+  // A floor and a half-way line, drawn whether or not there is data yet. The
+  // first two minutes are spent filling this from the right, and without
+  // something behind it those first few points read as a smudge rather than as
+  // the beginning of a chart.
+  ctx.strokeStyle = 'rgba(38, 42, 53, 0.9)';
+  ctx.lineWidth = 1;
+  for (const y of [h - 0.5, Math.round(h / 2) + 0.5]) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(w, y);
+    ctx.stroke();
+  }
+
+  const line = (series, stroke, fill) => {
+    if (series.length < 2) return;
+    // Always the same horizontal scale, so a chart that has only been running
+    // ten seconds grows from the right rather than stretching to fill.
+    const step = w / (SPARK_POINTS - 1);
+    const x = (i) => w - (series.length - 1 - i) * step;
+    const y = (v) => h - 1 - (Math.max(0, Math.min(100, v)) / 100) * (h - 2);
+
+    ctx.beginPath();
+    ctx.moveTo(x(0), y(series[0]));
+    for (let i = 1; i < series.length; i += 1) ctx.lineTo(x(i), y(series[i]));
+
+    ctx.lineTo(x(series.length - 1), h);
+    ctx.lineTo(x(0), h);
+    ctx.closePath();
+    ctx.fillStyle = fill;
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.moveTo(x(0), y(series[0]));
+    for (let i = 1; i < series.length; i += 1) ctx.lineTo(x(i), y(series[i]));
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  };
+
+  line(history.mem, '#6e7681', 'rgba(110, 118, 129, 0.16)');
+  line(history.cpu, '#4d9cf6', 'rgba(77, 156, 246, 0.18)');
+}
+
+async function tickSpark() {
+  let stats;
+  try {
+    stats = await api.system();
+  } catch {
+    return; // leave the line as it is; the next tick can try again
+  }
+
+  pushPoint(history.cpu, stats.cpu);
+  pushPoint(history.mem, stats.mem);
+  sparkCpu.textContent = `${Math.round(stats.cpu)}%`;
+  sparkMem.textContent = `${Math.round(stats.mem)}%`;
+  drawSpark();
+}
+
+window.addEventListener('resize', drawSpark);
+
+/**
+ * The very first read has nothing to subtract from and can only answer zero, so
+ * it is thrown away rather than drawn — otherwise every launch would open on a
+ * dip to nothing that never happened. What follows is measured over a whole
+ * tick, which is also the shortest window the kernel's tick counters can say
+ * anything useful about.
+ */
+async function startSpark() {
+  try {
+    await api.system();
+  } catch { /* the interval below will try again */ }
+  setInterval(tickSpark, SPARK_TICK_MS);
+}
+
+// ------------------------------------------------------- the processes panel
+
+const procs = $('procs');
+const procsList = $('procslist');
+const procsSub = $('procssub');
+const procsGpu = $('procsgpu');
+const procsGpuWrap = $('procsgpuwrap');
+
+let procsReturn = null;
+let procsView = null;
+
+// Which job rows are expanded, by pid. Kept out here so a repaint every two
+// seconds does not fold everything the moment you open it.
+const openJobs = new Set();
+
+function procsOpen() {
+  return !procs.hidden;
+}
+
+function mb(bytes) {
+  if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`;
+  return `${Math.round(bytes / 1e6)} MB`;
+}
+
+function pct(n) {
+  return n >= 10 ? `${Math.round(n)}%` : `${n.toFixed(1)}%`;
+}
+
+function mk(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+/** One number in the row's right-hand column, dimmed when it is nothing. */
+function metric(value, text, hot = 60) {
+  const node = mk('span', 'proc-metric', text);
+  if (!value) node.classList.add('zero');
+  else if (value >= hot) node.classList.add('hot');
+  return node;
+}
+
+function jobRow(job, showGpu) {
+  const row = mk('div', 'proc-job');
+  const head = mk('button', 'proc-row');
+
+  const open = openJobs.has(job.pid);
+  head.appendChild(mk('span', `proc-twist${job.children.length ? '' : ' none'}`,
+    job.children.length ? (open ? '–' : '+') : ''));
+
+  const label = mk('span', 'proc-label');
+  label.appendChild(mk('span', 'proc-name', job.label));
+  // The ports are the answer to "what is this and how do I reach it", so they
+  // sit with the name rather than in the numbers on the right.
+  for (const port of job.ports) label.appendChild(mk('span', 'proc-port', `:${port}`));
+  head.appendChild(label);
+
+  if (job.count > 1) head.appendChild(mk('span', 'proc-count', `${job.count}`));
+  head.appendChild(metric(job.cpu, pct(job.cpu)));
+  if (showGpu) head.appendChild(metric(job.gpu, pct(job.gpu)));
+  head.appendChild(metric(job.rss, mb(job.rss), Infinity));
+
+  head.title = `pid ${job.pid}`;
+  head.addEventListener('click', () => {
+    if (!job.children.length) return;
+    if (openJobs.has(job.pid)) openJobs.delete(job.pid); else openJobs.add(job.pid);
+    paintProcs();
+  });
+  row.appendChild(head);
+
+  if (open && job.children.length) {
+    const kids = mk('div', 'proc-kids');
+    for (const child of job.children) {
+      const line = mk('div', 'proc-row child');
+      line.appendChild(mk('span', 'proc-twist none', ''));
+
+      const label2 = mk('span', 'proc-label');
+      label2.appendChild(mk('span', 'proc-name', child.label));
+      for (const port of child.ports || []) label2.appendChild(mk('span', 'proc-port', `:${port}`));
+      line.appendChild(label2);
+
+      line.appendChild(mk('span', 'proc-count', ''));
+      line.appendChild(metric(child.cpu, pct(child.cpu)));
+      if (showGpu) line.appendChild(metric(child.gpu || 0, pct(child.gpu || 0)));
+      line.appendChild(metric(child.rss, mb(child.rss), Infinity));
+      kids.appendChild(line);
+    }
+    row.appendChild(kids);
+  }
+
+  return row;
+}
+
+function paintProcs() {
+  if (!procsOpen()) return;
+
+  const showGpu = procsGpu.checked;
+  procsList.classList.toggle('with-gpu', showGpu);
+
+  if (!procsView) {
+    procsList.replaceChildren(mk('p', 'proc-empty', 'Looking…'));
+    return;
+  }
+
+  const busy = procsView.sessions.filter((s) => s.jobs.length);
+  const quiet = procsView.sessions.length - busy.length;
+
+  if (!busy.length) {
+    procsList.replaceChildren(mk('p', 'proc-empty', procsView.sessions.length
+      ? 'Nothing running. Every terminal is sitting at its prompt.'
+      : 'No terminals open.'));
+  } else {
+    const frag = document.createDocumentFragment();
+
+    // Two columns of percentages with nothing to tell them apart is a puzzle,
+    // so the numbers are named once at the top rather than on every row.
+    const header = mk('div', 'proc-row head');
+    header.appendChild(mk('span', 'proc-twist none', ''));
+    header.appendChild(mk('span', 'proc-label'));
+    header.appendChild(mk('span', 'proc-count', ''));
+    header.appendChild(mk('span', 'proc-metric', 'cpu'));
+    if (showGpu) header.appendChild(mk('span', 'proc-metric', 'gpu'));
+    header.appendChild(mk('span', 'proc-metric', 'ram'));
+    frag.appendChild(header);
+
+    for (const session of busy) {
+      const group = mk('div', 'proc-session');
+      const head = mk('div', 'proc-session-head');
+      head.appendChild(mk('span', 'proc-session-name', session.title));
+      if (session.projectName) {
+        head.appendChild(mk('span', 'proc-session-project', session.projectName));
+      }
+      group.appendChild(head);
+      for (const job of session.jobs) group.appendChild(jobRow(job, showGpu));
+      frag.appendChild(group);
+    }
+    procsList.replaceChildren(frag);
+  }
+
+  const totals = procsView.totals;
+  const parts = [
+    `${totals.jobs} ${totals.jobs === 1 ? 'job' : 'jobs'}`,
+    `${pct(totals.cpu)} cpu`,
+    mb(totals.rss),
+  ];
+  if (quiet) parts.push(`${quiet} idle ${quiet === 1 ? 'terminal' : 'terminals'}`);
+  procsSub.textContent = parts.join(' · ');
+}
+
+async function openProcs() {
+  if (procsOpen()) return;
+  procsReturn = document.activeElement;
+  procs.hidden = false;
+  procsView = null;
+  paintProcs();
+
+  let started;
+  try {
+    started = await api.processes.start();
+  } catch {
+    started = { ok: false, gpuAvailable: false };
+  }
+
+  // The counter only exists on Windows, so elsewhere the box is not offered
+  // rather than offered and broken.
+  procsGpuWrap.hidden = !started.gpuAvailable;
+
+  if (!started.ok) {
+    procsSub.textContent = 'Could not read the process list on this machine.';
+    procsList.replaceChildren(mk('p', 'proc-empty',
+      'Hangar asks the system for this and got no answer. Everything else keeps working.'));
+  }
+
+  $('procsclose').focus();
+}
+
+function closeProcs() {
+  if (!procsOpen()) return;
+  procs.hidden = true;
+
+  // Nothing is looking at it, so nothing should be measuring for it. The panel
+  // is the only reason the sampler exists. Not awaited, and a failure here is
+  // not worth a word — the main process stops it on the window closing too.
+  api.processes.stop().catch(() => {});
+  procsView = null;
+
+  if (procsReturn && procsReturn.focus) procsReturn.focus();
+  procsReturn = null;
+}
+
+// Only ever arrives while the panel is open, because the sampler only runs then.
+api.processes.onView((view) => {
+  procsView = view;
+  paintProcs();
+});
+
+spark.addEventListener('click', openProcs);
+$('procsclose').addEventListener('click', closeProcs);
+
+// A click on the backdrop rather than the card is a click at the window behind
+// it, which is the same "I am done with this" the close button is.
+procs.addEventListener('mousedown', (e) => {
+  if (e.target === procs) closeProcs();
+});
+
+procsGpu.addEventListener('change', () => {
+  api.processes.gpu(procsGpu.checked).catch(() => {});
+  // The column appears now rather than when the first slow answer lands, so the
+  // tick reads as having done something.
+  paintProcs();
+});
 
 // ------------------------------------------------------------------ settings
 
@@ -2075,6 +2413,7 @@ setup.addEventListener('mousedown', (e) => {
     await openSetup(state);
     refreshUsage();
     setInterval(refreshUsage, USAGE_TICK_MS);
+    startSpark();
     return;
   }
 
@@ -2093,6 +2432,7 @@ setup.addEventListener('mousedown', (e) => {
 
   refreshUsage();
   setInterval(refreshUsage, USAGE_TICK_MS);
+  startSpark();
 
   // Not awaited: the sweep runs behind whatever you do next, and every project
   // in it is skipped the moment a terminal starts working there.

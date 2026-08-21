@@ -34,6 +34,17 @@ contextBridge.exposeInMainWorld('hangar', {
 
   usage: () => ipcRenderer.invoke('usage:get'),
 
+  // What the machine is doing, and what the terminals have running underneath
+  // them. The cheap half is polled; the expensive half is only measured between
+  // start() and stop(), which the panel calls as it opens and closes.
+  system: () => ipcRenderer.invoke('system:stats'),
+  processes: {
+    start: () => ipcRenderer.invoke('processes:start'),
+    stop: () => ipcRenderer.invoke('processes:stop'),
+    gpu: (on) => ipcRenderer.invoke('processes:gpu', { on }),
+    onView: (cb) => ipcRenderer.on('processes:view', (_e, payload) => cb(payload)),
+  },
+
   // Phone access. Everything secret stays on the other side of this line — the
   // renderer is handed a pairing code to display and a list of device names,
   // never the keys those devices hold.

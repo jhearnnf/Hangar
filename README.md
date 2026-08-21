@@ -149,6 +149,14 @@ Creating a project makes an empty folder in the projects root. That is every wri
 (`sessions.js`), plus `robocopy` or `rsync` for backups, and on macOS `security` to read
 the usage token. Nothing installs a service and nothing runs elevated.
 
+One more, only while the resources panel is open (`processes.js`): a `powershell.exe` that
+loops over `Get-CimInstance Win32_Process` and `netstat -ano` every two seconds and prints
+the result as JSON, or off Windows an `sh` loop around `ps` and `lsof`. It reads the process
+table and writes nothing; it is killed when the panel closes, when the window closes and on
+quit. Ticking **GPU** in that panel starts a second, shorter-lived PowerShell every ten
+seconds for `Get-Counter '\GPU Engine(*)\Utilization Percentage'`. Nothing is started for
+any of this while the panel is shut.
+
 **At login.** Nothing, unless you tick *Start Hangar when Windows starts*, which writes a
 per-user startup entry through Electron's own API — the same list Task Manager's Startup
 tab shows and can disable. Unticking the box removes it. See *Starting with Windows*.
@@ -622,6 +630,84 @@ setups have no credentials file to read.
 
 Being part of the sidebar, they hide with it on `Ctrl+Shift+E`.
 
+## What the terminals are running
+
+Above the usage bars is a live line of CPU and memory for the whole machine, and clicking
+it — or `Ctrl+Shift+P` — opens what is behind the number: every process each terminal has
+started, grouped by the terminal that started it.
+
+That grouping is the point of it. A `claude` that has been told to start a dev server or
+run a test suite leaves it running three or four processes below itself, where the tab
+shows you nothing: the TUI is painting its own screen, and the thing holding a core is out
+of sight. Task Manager can see the processes but not which terminal they belong to, which
+is the half that matters when two of them are running and one has got stuck.
+
+The shell and `claude` itself are never listed — they are on every terminal by definition,
+so listing them would be listing the furniture. What you get is the first layer of things
+that are actually work, with everything below each one rolled up into it: a row saying
+`python run_tests.py test_lobby.py`, `7 procs`, `:4321`, and what it is costing. Expanding
+one shows what it is made of, with identical siblings folded together — a headless Chrome
+is eight renderers and a GPU process, and nine rows saying `chrome.exe` say less than one
+saying `chrome.exe ×9`.
+
+Ports are there because "what is this and how do I reach it" is the usual question, and a
+dev server's answer is a port rather than a byte count.
+
+The line is part of the sidebar and hides with it on `Ctrl+Shift+E`, the same as the usage
+bars. `Ctrl+Shift+P` opens the panel either way, so hiding the sidebar does not hide what
+is running behind it.
+
+### What it costs, which is why there are two of these
+
+The line and the panel are the same subject and nothing like the same price, so they are
+built differently.
+
+The **line** is `os.cpus()` and `os.freemem()` — counters the kernel already keeps, read in
+the main process. No child process, no dependency, no platform branch, nothing to poll but
+a number that is already sitting there. So it runs the whole time the window is up.
+
+The **panel** walks every process on the machine, pairs each with its terminal and asks
+which of them are listening on a port. That runs **only while the panel is open** — it
+starts when you open it and the sampler is killed when you close it, when the window
+closes, and on quit. Closing the window to the tray stops it too: a PowerShell looping over
+280 processes every two seconds behind a tray icon is not a thing to leave running.
+
+One long-lived sampler does the work rather than one per tick, because starting a
+PowerShell costs about 300ms against the roughly 70ms the query itself takes. It prints a
+line of JSON every two seconds and `processes.js` reads it. Off Windows the same job is one
+`sh` loop around `ps` and `lsof`.
+
+CPU is a share of the **whole machine**, not of one core — the same thing the line above
+the bars and Task Manager mean, so 100% is everything busy. On Windows it is worked out
+here from the kernel and user tick counters, as the difference between two samples; `ps`
+already answers in percent, so off Windows that number is taken as given and is a decayed
+average rather than an instantaneous one.
+
+A job has to survive about a second and a half before it is listed. Claude runs a great
+many very short commands — a `git status`, an `ls` — and each is a real process that would
+otherwise appear for one tick and vanish. What this panel is for is the things that stay.
+
+### The two that Windows will not tell you
+
+**Per-process network throughput is not in here, because it is not available.** Windows has
+no per-process byte counter outside ETW, and `Get-NetTCPConnection` gives you connections
+rather than traffic. Listening ports are what is shown instead, which is the more useful
+answer for a dev server anyway.
+
+**GPU is off unless you tick the box**, and that is a measurement rather than caution:
+`\GPU Engine(*)\Utilization Percentage` takes **2.7 seconds** to answer on a machine with
+469 engine instances, which is longer than the tick it would have to be part of. Ticked, it
+runs on its own much slower lane — a separate child every ten seconds, whose answer joins
+the next tick — and the column appears. Unticked it costs nothing at all. It is a Windows
+counter with no macOS equivalent, so the box is not offered there. For a dev server or a
+test run it reads zero, which is the honest answer; a headless browser is where it earns
+its place.
+
+Everything here fails to "no data" rather than to an error. No PowerShell, a sampler that
+dies, output that will not parse — the panel says it could not read the process list and
+the rest of Hangar carries on. It is a panel about other processes and has no business
+being the thing that breaks.
+
 ## Keys
 
 Windows Terminal conventions, so plain `Ctrl+C`, `Ctrl+W`, `Ctrl+T` etc. always reach the
@@ -635,6 +721,7 @@ shell rather than being stolen by the app.
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous tab |
 | `Alt+1` … `Alt+9` | Jump to tab |
 | `Ctrl+Shift+F` | Find in scrollback |
+| `Ctrl+Shift+P` | What the terminals are running |
 | `Ctrl+Shift+C` / `Ctrl+Shift+V` | Copy / paste |
 | `Ctrl+Shift+K` | Clear scrollback |
 | `Ctrl+Shift+B` | Zen — hide sidebar and tab bar both |
@@ -657,6 +744,7 @@ meta-return it has nothing to do with.
 | --- | --- |
 | `main.js` | Electron main: window, tray, startup entry, and the wiring between the rest |
 | `sessions.js` | Every running terminal — the ptys, their scrollback, names and stages |
+| `processes.js` | What those terminals are running underneath them, and what it costs |
 | `server.js` | The local server a phone talks to |
 | `devices.js` | Pairing codes and the keys paired phones hold — pure, tested |
 | `discovery.js` | Answering "any Hangars out there?", and which addresses to offer |

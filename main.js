@@ -13,6 +13,7 @@ const { validateProjectName } = require('./project-name');
 const { parseState, restoreState, MIN_SIZE } = require('./window-state');
 const { mirror, sweepDetached } = require('./backup');
 const { createUsageReader } = require('./usage');
+const { createMonitor, createSystemReader } = require('./processes');
 const { createSessions } = require('./sessions');
 const { recentFor } = require('./transcripts');
 const { createDevices, DEVICES_FILE } = require('./devices');
@@ -335,6 +336,12 @@ function createWindow() {
       event.preventDefault();
       win.hide();
     }
+
+    // Whether this is a hide or the end of the window, the panel that asked for
+    // the sampler has gone and nothing is reading it. It costs a walk of every
+    // process on the machine every two seconds, which is not a thing to leave
+    // running behind a tray icon; opening the panel again starts it again.
+    monitor.stop();
   });
 
   win.on('closed', () => {
@@ -532,6 +539,10 @@ app.on('before-quit', () => {
   // the quit is where they end — before the sweep below, so the copy it makes
   // is of a folder nothing is still writing to.
   sessions.killAll();
+  // The sampler is a child of ours like any other, and one left behind would be
+  // a PowerShell looping over every process on the machine with nobody reading
+  // it. Harmless only until the next launch starts a second.
+  monitor.stop();
   if (responder) { responder.close(); responder = null; }
   server.dispose();
   // config is null if we are quitting before ever becoming ready.
@@ -606,6 +617,42 @@ sessions.on('session', (payload) => {
   toWindow('session:event', payload);
   paintTray();
 });
+
+// --------------------------------------------------------------- resources
+
+/**
+ * The line above the usage bars, and the panel behind it.
+ *
+ * Two different costs, kept apart on purpose. The line is `os.cpus()` — ticks
+ * the kernel already has, no child process, no platform branch — so it can run
+ * whenever the window is up. The panel walks every process on the machine and
+ * pairs each one with the terminal that started it, which is worth doing only
+ * while somebody has it open, so it starts and stops with the panel.
+ */
+const system = createSystemReader();
+const monitor = createMonitor({
+  log: (line) => { if (process.env.HANGAR_DEBUG) console.log(`[processes] ${line}`); },
+});
+
+// The panel is about Hangar's terminals rather than about the machine, so the
+// walk asks for the session list as it builds each view. A terminal opened a
+// second ago is in the next tick, and one that has gone takes its jobs with it,
+// without anything here subscribing to anything.
+monitor.useSessions(() => sessions.list());
+monitor.on((view) => toWindow('processes:view', view));
+
+ipcMain.handle('system:stats', () => system.read());
+
+ipcMain.handle('processes:start', () => ({
+  ok: monitor.start(),
+  gpuAvailable: monitor.gpuAvailable(),
+}));
+
+ipcMain.handle('processes:stop', () => { monitor.stop(); return null; });
+
+// Off unless asked for, and that is a measurement rather than caution: the GPU
+// engine counter takes seconds to answer. See the note in `processes.js`.
+ipcMain.handle('processes:gpu', (_event, { on }) => monitor.setGpu(on));
 
 ipcMain.handle('pty:create', (_event, { cwd, projectName, command, cols, rows }) => (
   // The id comes back from here rather than going in: two screens can both ask
