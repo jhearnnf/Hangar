@@ -149,6 +149,11 @@ function paintProject(projectPath) {
 const projectMenu = $('projectmenu');
 const projectMenuHead = $('projectmenuhead');
 const projectMenuList = $('projectmenulist');
+const projectDelete = $('projectdelete');
+
+// Which project the open menu is about. The delete item is a fixed piece of
+// the menu rather than one built per open, so it has to be told.
+let menuProject = null;
 
 // Bumped on every open and every close, so a read that comes back after the
 // menu was dismissed — or reopened on a different project — knows to say
@@ -161,6 +166,7 @@ function menuOpen() {
 
 function closeProjectMenu() {
   menuToken++;
+  menuProject = null;
   if (projectMenu.hidden) return;
   projectMenu.hidden = true;
   projectMenuList.textContent = '';
@@ -240,8 +246,10 @@ async function openProjectMenu(project, x, y) {
   }
   if (token !== menuToken) return;
 
+  menuProject = project;
   projectMenuHead.textContent = `Recent claude sessions — ${project.name}`;
   projectMenuList.textContent = '';
+  paintDeleteItem(project);
 
   if (!rows.length) {
     const none = document.createElement('div');
@@ -267,6 +275,48 @@ document.addEventListener('mousedown', (e) => {
 window.addEventListener('blur', closeProjectMenu);
 window.addEventListener('resize', closeProjectMenu);
 projectlist.addEventListener('scroll', closeProjectMenu);
+
+/**
+ * Offer the delete, or say why it is not being offered.
+ *
+ * A terminal open in the folder is the one refusal worth showing rather than
+ * finding out about after typing the word: on Windows a live shell holds its
+ * own directory open, so the delete would fail part-way through and leave a
+ * project half gone. Greyed with the reason in the tooltip, the same way a
+ * session that is already running is listed and not offered.
+ */
+function paintDeleteItem(project) {
+  const open = terminalsIn(project.path).length;
+  const label = projectDelete.querySelector('.pmenu-label');
+
+  if (open) {
+    projectDelete.setAttribute('aria-disabled', 'true');
+    projectDelete.tabIndex = -1;
+    label.textContent = 'Delete project…';
+    projectDelete.title = open === 1
+      ? `${project.name}
+
+A terminal is still open here. Close it first.`
+      : `${project.name}
+
+${open} terminals are still open here. Close them first.`;
+    return;
+  }
+
+  projectDelete.removeAttribute('aria-disabled');
+  projectDelete.tabIndex = 0;
+  label.textContent = `Delete ${project.name}…`;
+  projectDelete.title = `${project.path}
+
+Moves the whole folder to the ${BIN}.`;
+}
+
+projectDelete.addEventListener('click', () => {
+  if (projectDelete.getAttribute('aria-disabled') === 'true') return;
+  const project = menuProject;
+  closeProjectMenu();
+  if (project) openDeleteProject(project);
+});
 
 // ----------------------------------------------------------------- backups
 
@@ -514,7 +564,7 @@ function renderProject(project, wrap) {
   const row = document.createElement('div');
   row.className = 'project-row';
   row.title = `${project.path}\nDouble-click for a claude terminal (shift for a plain shell)` +
-    '\nRight-click to resume an earlier claude session' +
+    '\nRight-click to resume an earlier claude session, or delete the project' +
     (mine.length ? '\nArrow expands' : '');
   row.innerHTML =
     '<span class="twisty"></span><span class="pname"></span>' +
@@ -774,6 +824,174 @@ modalCancel.addEventListener('click', closeNewProject);
 // release.
 modal.addEventListener('mousedown', (e) => {
   if (e.target === modal) closeNewProject();
+});
+
+// --------------------------------------------------------- delete project
+
+/**
+ * Throw a project away, once.
+ *
+ * Everything else in Hangar is undone by doing it again — a terminal closed
+ * reopens, a backup that failed runs again. This one is not, so it is the one
+ * place that asks for a word instead of a click. The main process moves the
+ * folder to the recycle bin rather than deleting it outright, which is the
+ * difference between a mistake and a disaster, and the dialog says so.
+ */
+
+const del = $('del');
+const delPath = $('delpath');
+const delWarn = $('delwarn');
+const delWord = $('delword');
+const delError = $('delerror');
+const delConfirm = $('delconfirm');
+const delCancel = $('delcancel');
+
+// The word, in the one form it is compared in. What is typed is trimmed and
+// lowercased before it gets here, so DELETE and " delete " both count — the
+// dialog is asking for deliberateness, not for accurate typing.
+const DELETE_WORD = 'delete';
+
+// Windows calls it the recycle bin and everyone else calls it the trash, and
+// the dialog is promising the folder can be got back out of it — so it has to
+// name the one this machine actually has.
+const BIN = api.platform === 'win32' ? 'recycle bin' : 'trash';
+
+const DELETE_LABEL = 'Delete project';
+
+let deleting = null;   // the project this dialog is about, while it is up
+let deletingNow = false;
+let delReturn = null;
+
+function deleteOpen() {
+  return !del.hidden;
+}
+
+function openDeleteProject(project) {
+  if (deleteOpen()) return;
+
+  deleting = project;
+  deletingNow = false;
+  delReturn = document.activeElement;
+
+  delPath.textContent = project.path;
+  delPath.title = project.path;
+  delWarn.textContent = `${project.name} and everything in it goes to the ${BIN}.`;
+  delWord.value = '';
+  delError.textContent = '';
+  delConfirm.textContent = DELETE_LABEL;
+  checkWord();
+
+  del.hidden = false;
+  delWord.focus();
+}
+
+function closeDeleteProject() {
+  if (!deleteOpen()) return;
+  del.hidden = true;
+  deleting = null;
+
+  const tab = tabs.get(activeId);
+  if (tab) tab.term.focus();
+  else if (delReturn && delReturn.focus) delReturn.focus();
+  delReturn = null;
+}
+
+/** The button is dead until the word is typed. */
+function checkWord() {
+  const said = delWord.value.trim().toLowerCase() === DELETE_WORD;
+  delConfirm.disabled = deletingNow || !said;
+  return said;
+}
+
+/**
+ * Everything this window remembers about a project that is no longer there.
+ *
+ * The backup bookkeeping is the part that matters: a countdown left armed
+ * would fire minutes later and ask the main process to mirror a folder that
+ * has gone, which fails and paints a red badge on a row nobody can see.
+ */
+function forgetProject(projectPath) {
+  const timer = backupTimers.get(projectPath);
+  if (timer) clearTimeout(timer);
+  backupTimers.delete(projectPath);
+  backupState.delete(projectPath);
+  backupDirty.delete(projectPath);
+  retried.delete(projectPath);
+  expanded.delete(projectPath);
+}
+
+async function submitDeleteProject() {
+  if (deletingNow || !deleting) return;
+  if (!checkWord()) {
+    delError.textContent = `Type ${DELETE_WORD} to confirm.`;
+    delWord.focus();
+    return;
+  }
+
+  const project = deleting;
+  deletingNow = true;
+  delConfirm.disabled = true;
+  delConfirm.textContent = 'Deleting\u2026';
+
+  let result;
+  try {
+    result = await api.deleteProject(project.path);
+  } catch (err) {
+    result = { ok: false, message: err.message };
+  }
+
+  deletingNow = false;
+  delConfirm.textContent = DELETE_LABEL;
+
+  if (!result.ok) {
+    // The main process runs the same checks again and is the side that
+    // touched the disk, so whatever it says replaces the dialog's own idea of
+    // whether this was going to work.
+    checkWord();
+    delError.textContent = result.message;
+    delWord.focus();
+    delWord.select();
+    return;
+  }
+
+  forgetProject(project.path);
+  // The refreshed listing comes back with it, so the sidebar is rebuilt from
+  // what is really on disk rather than from a row spliced out on trust.
+  projects = result.projects;
+  renderSidebar();
+  closeDeleteProject();
+}
+
+/** Keep Tab inside the dialog, the same way the new-project one does. */
+function trapDeleteTab(e) {
+  const stops = [delWord, delCancel, delConfirm].filter((el) => !el.disabled);
+  const i = stops.indexOf(document.activeElement);
+  const next = e.shiftKey ? i - 1 : i + 1;
+  if (i !== -1 && next >= 0 && next < stops.length) return;
+
+  e.preventDefault();
+  e.stopPropagation();
+  stops[e.shiftKey ? stops.length - 1 : 0].focus();
+}
+
+delWord.addEventListener('input', () => {
+  checkWord();
+  delError.textContent = '';
+});
+delWord.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  submitDeleteProject();
+});
+
+delConfirm.addEventListener('click', submitDeleteProject);
+delCancel.addEventListener('click', closeDeleteProject);
+
+// Only when the press started on the backdrop, so a selection dragged out of
+// the field does not dismiss on release. Not while the delete is in flight:
+// the answer still has to land somewhere.
+del.addEventListener('mousedown', (e) => {
+  if (e.target === del && !deletingNow) closeDeleteProject();
 });
 
 // ------------------------------------------------------------ tab lifecycle
@@ -1394,6 +1612,24 @@ window.addEventListener('keydown', (e) => {
     return;
   }
 
+  // Escape backs out of the delete right up until it is asked for; once it is
+  // in flight there is nothing left to cancel, so the key does nothing rather
+  // than closing a dialog whose answer is still coming.
+  if (deleteOpen()) {
+    if (e.key === 'Escape') { swallow(); if (!deletingNow) closeDeleteProject(); return; }
+    if (e.key === 'Tab') trapDeleteTab(e);
+    return;
+  }
+
+  // Same rule as the cards above, with one addition: the shortcut that opened
+  // it also shuts it, so the panel is a toggle rather than something you have
+  // to reach for the mouse to be rid of.
+  if (procsOpen()) {
+    if (e.key === 'Escape') { swallow(); closeProcs(); return; }
+    if (ctrl && shift && e.code === 'KeyP') { swallow(); closeProcs(); }
+    return;
+  }
+
   // The project menu is dismissed by anything, so it does not swallow the key
   // that dismissed it — every shortcut below still fires, on a window that no
   // longer has a menu floating over it.
@@ -1458,6 +1694,7 @@ window.addEventListener('focus', () => {
   const tab = tabs.get(activeId);
   if (setupOpen()) { /* the card holds its own focus */ }
   else if (modalOpen()) modalName.focus();
+  else if (deleteOpen()) delWord.focus();
   else if (tab && findBar.hidden) tab.term.focus();
 
   // Coming back to the window is someone sitting down at it, which is the

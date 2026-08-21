@@ -10,6 +10,7 @@ const { execFile } = require('child_process');
 const pty = require('node-pty');
 const { defaultShell, argsFor, listProjects, PROJECT_IGNORE } = require('./shell');
 const { validateProjectName } = require('./project-name');
+const { checkProjectDelete } = require('./project-delete');
 const { parseState, restoreState, MIN_SIZE } = require('./window-state');
 const { mirror, sweepDetached } = require('./backup');
 const { createUsageReader } = require('./usage');
@@ -460,6 +461,62 @@ ipcMain.handle('projects:create', (_event, { name }) => {
   const result = makeProject(name);
   // A folder that appeared on this machine is news to every phone looking at
   // the same folder, whichever side asked for it.
+  if (result.ok) server.broadcastProjects();
+  return result;
+});
+
+/** How many of Hangar's terminals are open in a folder. */
+function terminalsIn(dir) {
+  const wanted = path.resolve(dir);
+  return sessions.list().filter((s) => path.resolve(s.projectPath) === wanted).length;
+}
+
+/**
+ * Delete a project folder — to the recycle bin, not off the disk.
+ *
+ * The window asks for this behind a dialog that makes you type the word, and
+ * every one of those checks is re-run here: the renderer is where the path
+ * came from, and this is the side that can actually remove a directory tree.
+ *
+ * `shell.trashItem` rather than `fs.rm` because it is the only version of this
+ * that can be taken back. A machine where it fails — a network share, a Linux
+ * without a trash implementation — gets the error and keeps its folder; the
+ * dialog said the recycle bin, so quietly deleting for good instead would be
+ * the one outcome nobody agreed to.
+ *
+ * The offer is deliberately not extended to whatever `robocopy` mirrored into
+ * the backup folder. That copy is the point of having it.
+ */
+async function removeProject(target) {
+  const check = checkProjectDelete(target, {
+    root: path.resolve(projectsRoot()),
+    appDir: __dirname,
+    busy: terminalsIn(target),
+  });
+  if (!check.ok) return check;
+
+  let stat;
+  try {
+    stat = fs.statSync(check.path);
+  } catch (err) {
+    if (err.code === 'ENOENT') return { ok: false, message: 'That folder is not there any more.' };
+    return { ok: false, message: `Could not read the folder: ${err.message}` };
+  }
+  if (!stat.isDirectory()) return { ok: false, message: 'That is a file, not a project folder.' };
+
+  try {
+    await electronShell.trashItem(check.path);
+  } catch (err) {
+    return { ok: false, message: `Could not move it to the recycle bin: ${err.message}` };
+  }
+
+  return { ok: true, project: { name: check.name, path: check.path }, ...projectListing() };
+}
+
+ipcMain.handle('projects:delete', async (_event, { projectPath }) => {
+  const result = await removeProject(projectPath);
+  // Same as creating one: a phone looking at the same folder is now looking at
+  // a project that is gone.
   if (result.ok) server.broadcastProjects();
   return result;
 });

@@ -502,6 +502,28 @@ html, body {
   line-height: 1.5;
 }
 
+/* The one item that is not a session, kept apart from the ones that are. */
+.pmenu-foot {
+  border-top: 1px solid var(--line);
+  margin-top: 4px;
+  padding-top: 4px;
+}
+
+.pmenu-item.danger { color: var(--st-planning); }
+
+.pmenu-item.danger:hover,
+.pmenu-item.danger:focus-visible { background: #2a1d1f; }
+
+/* Greyed while a terminal is open in the project, with the reason in the
+   tooltip — same treatment as a session that is already running, and for the
+   same reason: an item that vanished would look like a missing feature. */
+.pmenu-item.danger[aria-disabled="true"] {
+  color: var(--faint);
+  cursor: default;
+}
+
+.pmenu-item.danger[aria-disabled="true"]:hover { background: none; }
+
 /* --------------------------------------------------------------- modal */
 
 /* Fixed and over everything, so the terminals underneath keep running but
@@ -610,6 +632,37 @@ html, body {
   cursor: default;
 }
 
+/* Red rather than blue, because the primary button everywhere else in Hangar
+   makes something and this one unmakes it. */
+.modal-btn.danger {
+  border-color: var(--st-planning);
+  background: var(--st-planning);
+  color: #1a0c0b;
+}
+
+.modal-btn.danger:hover { background: #f78078; color: #1a0c0b; }
+
+.modal-btn.danger:disabled {
+  border-color: var(--line);
+  background: #191c23;
+  color: var(--faint);
+}
+
+/* What is about to happen, in the words of the machine it happens on. */
+.del-warn {
+  margin-top: 12px;
+  color: var(--text);
+  line-height: 1.5;
+}
+
+.del-ask {
+  display: block;
+  margin-top: 12px;
+  color: var(--dim);
+  line-height: 1.5;
+}
+
+.del-ask b { color: var(--text); font-weight: 600; }
 
 /* ---------------------------------------------------- processes panel */
 

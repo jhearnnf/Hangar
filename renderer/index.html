@@ -80,6 +80,13 @@
 <div id="projectmenu" class="pmenu" hidden role="menu" aria-label="Recent claude sessions">
   <div id="projectmenuhead" class="pmenu-head"></div>
   <div id="projectmenulist" class="pmenu-list"></div>
+  <!-- Below the line, and last, because everything above it opens a terminal
+       and this one throws the folder away. -->
+  <div class="pmenu-foot">
+    <button id="projectdelete" class="pmenu-item danger" type="button" role="menuitem">
+      <span class="pmenu-label">Delete project…</span>
+    </button>
+  </div>
 </div>
 
 <!-- Covers the whole window, so nothing behind it can be clicked or typed at
@@ -95,6 +102,54 @@
       <button id="modalcancel" class="modal-btn">Cancel</button>
       <button id="modalcreate" class="modal-btn primary">Create project folder</button>
     </div>
+  </div>
+</div>
+
+<!-- Deleting a project asks for the word rather than for a click, because a
+     click is what everything else in here takes and this is the one thing that
+     cannot be taken back by clicking again. -->
+<div id="del" class="modal" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="deltitle">
+    <div id="deltitle" class="modal-title">Delete project</div>
+    <div class="modal-sub"><span id="delpath" class="modal-root"></span></div>
+    <div id="delwarn" class="del-warn"></div>
+    <label id="dellabel" class="del-ask" for="delword">Type <b>delete</b> to confirm</label>
+    <input id="delword" class="modal-input" type="text" placeholder="delete"
+           spellcheck="false" autocomplete="off" autocapitalize="off" />
+    <div id="delerror" class="modal-error"></div>
+    <div class="modal-actions">
+      <button id="delcancel" class="modal-btn">Cancel</button>
+      <button id="delconfirm" class="modal-btn danger" disabled>Delete project</button>
+    </div>
+  </div>
+</div>
+
+<!-- What each terminal has running underneath it. Measuring this is not free, so
+     the sampler in the main process runs only while this is on screen. -->
+<div id="procs" class="modal" hidden>
+  <div class="modal-card procs-card" role="dialog" aria-modal="true" aria-labelledby="procstitle">
+    <div class="procs-head">
+      <div class="procs-heading">
+        <div id="procstitle" class="modal-title">Background processes</div>
+        <div id="procssub" class="modal-sub">Looking…</div>
+      </div>
+      <!-- Hidden off Windows, where there is no per-process GPU counter to read
+           at all. Off by default on it, because the counter takes seconds. -->
+      <label id="procsgpuwrap" class="procs-gpu" hidden
+             title="The GPU counter takes a few seconds to answer, so it is sampled slowly">
+        <input id="procsgpu" type="checkbox" />
+        <span>GPU</span>
+      </label>
+      <button id="procsclose" class="icon" title="Close (Esc)">&#10005;</button>
+    </div>
+
+    <div id="procslist" class="procs-list"></div>
+
+    <p class="procs-foot">
+      Grouped by the terminal that started it. The shell and <code>claude</code> itself are
+      not listed — everything here is something they went on to run. CPU is a share of the
+      whole machine.
+    </p>
   </div>
 </div>
 

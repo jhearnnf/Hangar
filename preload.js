@@ -5,6 +5,11 @@ const { contextBridge, ipcRenderer, clipboard } = require('electron');
 contextBridge.exposeInMainWorld('hangar', {
   listProjects: () => ipcRenderer.invoke('projects:list'),
   createProject: (name) => ipcRenderer.invoke('projects:create', { name }),
+  deleteProject: (projectPath) => ipcRenderer.invoke('projects:delete', { projectPath }),
+
+  // Only ever used to name things the way this machine names them — the
+  // recycle bin, which is a wastebasket somewhere else.
+  platform: process.platform,
 
   // The id now comes back from the main process rather than going out with the
   // request: the terminal belongs to the app, not to this window, and only the

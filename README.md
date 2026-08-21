@@ -497,6 +497,27 @@ menu would otherwise be half full of rows that all said "/resume" and led to not
 The phone has the same list behind a long press — see [Resuming from the
 phone](#resuming-from-the-phone). One reader on the PC answers both.
 
+### Deleting a project
+
+Under the same right-click menu, below a line and away from everything that opens a
+terminal, is **Delete <project>**. It asks for the word *delete* to be typed rather than
+for a second click, because a click is what every other button in Hangar takes and this is
+the one thing clicking again does not undo.
+
+The folder goes to the recycle bin, not off the disk, so a mistake is a trip to the bin
+rather than a restore from backup — and any backup Hangar has already mirrored is left
+exactly where it is.
+
+The offer is withdrawn while a terminal is open in the project: a live shell holds its own
+directory open on Windows, so the delete would fail part-way through and leave a project
+half gone. The item is greyed with the count in its tooltip until they are closed.
+
+Every check runs twice. The dialog runs them to decide what to offer, and the main process
+runs them again before it touches anything — the path arrives over IPC and only that side
+holds `fs`. It has to be a folder sitting directly inside the projects folder, it cannot be
+the projects folder itself, and it cannot be Hangar, which is usually a sibling of the
+projects it lists (`project-delete.js`, tested in `test/project-delete.test.js`).
+
 A terminal that cannot start says so in the tab it would have been. A shell that fails to
 spawn, and one that exits within a second and a half of starting — a shell that isn't
 there, a login profile that bails, a `claude` that dies on startup — both used to leave
