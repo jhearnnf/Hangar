@@ -1049,13 +1049,35 @@ for (const button of document.querySelectorAll('#keybar button')) {
 
 const compose = $('compose');
 
+// How long to leave between a prompt and the Enter that submits it. A TUI
+// handed text and a carriage return in one read has been given a paste rather
+// than a line somebody typed, and a pasted newline stays a newline: the prompt
+// lands in the box and sits there, unsent. Arriving on its own, the Enter means
+// what it says. Long enough to survive two writes being coalesced on the way,
+// short enough that nobody waits for it.
+const SUBMIT_GAP_MS = 40;
+
 function sendComposed() {
   const text = compose.value;
-  if (!openId || !text.trim()) return;
-  // As one message, ending in a carriage return: this is a whole prompt going
-  // in at once, which is the entire point of the box. Per-keystroke over wifi
-  // to a TUI that redraws on every character is the thing it exists to avoid.
-  client.send({ t: 'input', id: openId, data: text + '\r' });
+  if (!openId) return;
+
+  // Nothing typed and ➤ tapped anyway: send the bare Enter. That is the
+  // gesture of someone whose last prompt is sitting unsent in the terminal,
+  // and a button that does nothing at all there is a button that looks broken.
+  if (!text.trim()) {
+    client.send({ t: 'input', id: openId, data: '\r' });
+    return;
+  }
+
+  // The prompt as one message, because per-keystroke over wifi to a TUI that
+  // redraws on every character is the thing this box exists to avoid. Both
+  // halves go to the terminal that was open when the send began rather than to
+  // whatever is open a frame later, so leaving the screen mid-send cannot fire
+  // an Enter at a stranger.
+  const id = openId;
+  client.send({ t: 'input', id, data: text });
+  setTimeout(() => client.send({ t: 'input', id, data: '\r' }), SUBMIT_GAP_MS);
+
   compose.value = '';
   compose.style.height = 'auto';
 }
