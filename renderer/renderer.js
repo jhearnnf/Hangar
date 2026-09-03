@@ -571,6 +571,48 @@ async function sweepAllProjects() {
   }
 }
 
+// ------------------------------------------------ dragging terminals about
+
+// The terminal currently being carried, or null. It lives out here because the
+// row that starts the drag and the list that receives it are built in separate
+// closures, and because `paint` has to keep the class on a row that gets
+// redrawn while it is mid-flight.
+let dragId = null;
+
+/**
+ * Put `ids` back into the slots those same ids already hold in `order`.
+ *
+ * Reordering happens inside one project, but `order` is every terminal in the
+ * window, so a project's terminals swap places with each other and keep the
+ * positions they had in the global list. Anything the drag did not touch —
+ * every other project's terminals, and the tab strip's idea of next and
+ * previous — stays exactly where it was.
+ */
+function resequence(current, ids) {
+  const moving = [...new Set(ids)].filter((id) => current.includes(id));
+  const slots = new Set(moving);
+  let next = 0;
+  return current.map((id) => (slots.has(id) ? moving[next++] : id));
+}
+
+/** The row a drop at this height belongs above, or null for the end of the list. */
+function rowUnder(list, y, dragged) {
+  for (const row of list.children) {
+    if (row === dragged) continue;
+    const box = row.getBoundingClientRect();
+    if (y < box.top + box.height / 2) return row;
+  }
+  return null;
+}
+
+/** Put the tab strip back in the order the sidebar was just dragged into. */
+function applyTabOrder() {
+  for (const id of order) {
+    const tab = tabs.get(id);
+    if (tab && tab.el) tablist.appendChild(tab.el);
+  }
+}
+
 function renderSidebar() {
   projectlist.textContent = '';
   projectRows.clear();
@@ -646,6 +688,35 @@ function renderProject(project, wrap) {
   list.className = 'termlist';
   wrap.appendChild(list);
 
+  // The list takes the drop rather than each row, so the gap below the last
+  // terminal is a landing place too, and so a pointer that strays off the rows
+  // sideways does not keep dropping the drag. A terminal only ever lands in
+  // the project it came from: the rest of the sidebar refuses the drag, which
+  // is what makes a dragged row spring back rather than change projects.
+  list.addEventListener('dragover', (e) => {
+    const dragged = tabs.get(dragId);
+    if (!dragged || !dragged.row || dragged.projectPath !== project.path) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+
+    // Moved only when the answer changed: `insertBefore` relocates the node
+    // every time it is called, and doing that on every dragover event makes
+    // the row under the pointer flicker.
+    const before = rowUnder(list, e.clientY, dragged.row);
+    if (before !== dragged.row.nextSibling) list.insertBefore(dragged.row, before);
+  });
+
+  list.addEventListener('drop', (e) => {
+    const dragged = tabs.get(dragId);
+    if (!dragged || dragged.projectPath !== project.path) return;
+    e.preventDefault();
+    // The rows have been rearranged under the pointer all the way here, so the
+    // list itself is the new order — read it back rather than working out
+    // where the drop landed a second time.
+    order = resequence(order, [...list.children].map((row) => row.dataset.tab));
+    applyTabOrder();
+  });
+
   for (const tab of mine) {
     const termRow = document.createElement('div');
     termRow.innerHTML =
@@ -659,6 +730,24 @@ function renderProject(project, wrap) {
     termRow.querySelector('.x').addEventListener('click', (e) => {
       e.stopPropagation();
       closeTab(tab.id);
+    });
+
+    termRow.draggable = true;
+    termRow.dataset.tab = tab.id;
+    termRow.addEventListener('dragstart', (e) => {
+      dragId = tab.id;
+      e.dataTransfer.effectAllowed = 'move';
+      // Nothing reads it, but a drag carrying no data at all is cancelled
+      // outright by some builds before it ever reaches a drop target.
+      e.dataTransfer.setData('text/plain', tab.id);
+      termRow.classList.add('dragging');
+    });
+    // Fires after the drop, and after a drag abandoned anywhere else, so this
+    // is the one place that has to put the sidebar back together — from
+    // `order`, which the drop has either changed or left alone.
+    termRow.addEventListener('dragend', () => {
+      dragId = null;
+      renderSidebar();
     });
 
     tab.row = termRow;
@@ -680,9 +769,11 @@ function paint(tab) {
     tab.el.title = `${tab.projectName} — ${tab.title}`;
   }
   if (tab.row) {
-    tab.row.className = 'term-row' + state + active;
+    // Output arriving mid-drag repaints the row, and rebuilding the class list
+    // from scratch would drop the class that dims the terminal being carried.
+    tab.row.className = 'term-row' + state + active + (tab.id === dragId ? ' dragging' : '');
     tab.row.querySelector('.tname').textContent = tab.title;
-    tab.row.title = `${tab.title} — ${tab.state}`;
+    tab.row.title = `${tab.title} — ${tab.state}` + '\nDrag to reorder';
   }
   paintProject(tab.projectPath);
 }

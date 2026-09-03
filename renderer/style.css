@@ -3,12 +3,19 @@
   --bar: #0d0f14;
   --side: #0a0c11;
   --tab: #1a1d25;
-  --tab-active: #12141a;
   --line: #262a35;
   --text: #c9d1d9;
   --dim: #6e7681;
   --faint: #4a5058;
   --accent: #4d9cf6;
+  /* The terminal being typed into. Loud on purpose: the old grey wash was
+     easy to lose in a sidebar of a dozen rows. It is a wash and a bar rather
+     than a text colour, so it never competes with the stage colours below —
+     those still say what a terminal is doing, this only says which one is
+     under the keyboard. */
+  --current: #f5c542;
+  --current-wash: rgba(245, 197, 66, 0.15);
+  --current-text: #f7e6b4;
   /* Dropbox blue, lifted a shade so it still reads on the dark sidebar. */
   --dropbox: #3d87ff;
 
@@ -325,8 +332,18 @@ html, body {
   color: var(--dim);
 }
 
-.term-row.active { background: #1b1f28; }
-.term-row.active .tname { color: var(--text); }
+/* Inset rather than a real border: a 3px edge added to the box would shove
+   the dot and the name out of the column every other row keeps them in. */
+.term-row.active {
+  background: var(--current-wash);
+  box-shadow: inset 3px 0 0 var(--current);
+}
+
+.term-row.active .tname { color: var(--current-text); font-weight: 600; }
+
+/* The row is still in the list while it is being carried, so it dims to say
+   the position under the pointer is where it is going, not where it is. */
+.term-row.dragging { opacity: 0.35; }
 
 .dot {
   flex: 0 0 7px;
@@ -1257,8 +1274,8 @@ button.proc-row:hover { background: #1a1e26; }
 }
 
 .tab.active {
-  background: var(--tab-active);
-  box-shadow: inset 0 2px 0 var(--accent);
+  background: var(--current-wash);
+  box-shadow: inset 0 2px 0 var(--current);
 }
 
 .tab .label {
@@ -1267,6 +1284,8 @@ button.proc-row:hover { background: #1a1e26; }
   text-overflow: ellipsis;
   color: var(--dim);
 }
+
+.tab.active .label { color: var(--current-text); font-weight: 600; }
 
 .tab .close {
   flex: 0 0 16px;
