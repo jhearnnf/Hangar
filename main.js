@@ -18,6 +18,7 @@ const { createUsageReader } = require('./usage');
 const { createMonitor, createSystemReader } = require('./processes');
 const { createSessions } = require('./sessions');
 const { recentFor } = require('./transcripts');
+const { recentFor: recentCodexFor } = require('./codex-sessions');
 const { createDevices, DEVICES_FILE } = require('./devices');
 const { createServer } = require('./server');
 const { lanAddresses, startResponder, DISCOVERY_PORT } = require('./discovery');
@@ -26,6 +27,7 @@ const { loginItem, startedHidden } = require('./startup');
 const {
   CONFIG_FILE, suggestions, parseConfig, resolveConfig, validateConfig,
 } = require('./config');
+const Agents = require('./agents');
 
 let win = null;
 
@@ -96,6 +98,11 @@ function saveConfig(next) {
   applyStartup(applied);
   applyRemote(applied);
   applyTray(applied);
+  // A phone already connected is holding the old answer to "what does the +
+  // button run", and would go on opening the other agent until it happened to
+  // reconnect. The window is told by the reply to this call; the phones are
+  // told here.
+  server.broadcastInfo();
   return applied;
 }
 
@@ -106,6 +113,7 @@ function envOverrides(env = process.env) {
     projectsRoot: Boolean(env.HANGAR_PROJECTS_ROOT),
     backupRoot: Boolean(env.HANGAR_BACKUP_ROOT),
     remotePort: Boolean(env.HANGAR_REMOTE_PORT),
+    agent: Boolean(env.HANGAR_AGENT),
   };
 }
 
@@ -658,7 +666,27 @@ ipcMain.handle('config:reveal', (_event, { target }) => {
 // time; the token never leaves this process.
 const usage = createUsageReader();
 
-ipcMain.handle('usage:get', () => usage.get());
+/** The chosen agent, in the shape the phone draws and runs with. */
+function agentSummary() {
+  const { id, label, command } = Agents.get(config && config.agent);
+  return { id, label, command };
+}
+
+/**
+ * The bars, or nothing at all.
+ *
+ * They are Claude Code's own numbers off Anthropic's endpoint, and there is no
+ * equivalent to read for another agent. So with one of those selected the
+ * endpoint is not asked — not asked rather than asked and ignored, since the
+ * token it would be asked with is not ours to spend on a question nobody is
+ * looking at — and the sidebar hides the bars exactly as it does on a machine
+ * where Claude Code has never been signed in.
+ */
+function currentUsage() {
+  return Agents.get(config && config.agent).usage ? usage.get() : { available: false };
+}
+
+ipcMain.handle('usage:get', () => currentUsage());
 
 // Every project, not only the ones worked on in this session: the point of the
 // backup is that the whole projects folder survives the machine, and plenty of
@@ -803,20 +831,22 @@ ipcMain.handle('sessions:list', () => sessions.list());
 ipcMain.handle('sessions:history', (_event, { id, seq }) => sessions.history(id, seq));
 
 /**
- * The claude sessions a project has had — the sidebar's right-click menu, and
- * the same list behind a long press on the phone.
+ * The sessions a project has had with whichever agent is selected — the
+ * sidebar's right-click menu, and the same list behind a long press on the
+ * phone.
  *
- * Read on the press rather than watched: it is two files, bounded in size, and
+ * Read on the press rather than watched: it is a bounded handful of files, and
  * a list that is a few milliseconds old at the moment it is drawn is as fresh
  * as a list can usefully be.
  */
 function recentSessions(projectPath) {
+  const agent = Agents.get(config && config.agent);
   try {
-    return recentFor(projectPath);
+    return agent.id === 'codex' ? recentCodexFor(projectPath) : recentFor(projectPath);
   } catch (err) {
-    // Claude Code owns both files and is free to change either. An empty menu
-    // is a fine way to say so; a broken sidebar is not.
-    console.error('Hangar: could not read claude history', err);
+    // Each agent owns its own files and is free to change any of them. An empty
+    // menu is a fine way to say so; a broken sidebar is not.
+    console.error(`Hangar: could not read ${agent.label} history`, err);
     return [];
   }
 }
@@ -923,7 +953,7 @@ const server = createServer({
     if (result.ok) toWindow('projects:changed');
     return result;
   },
-  usage: () => usage.get(),
+  usage: () => currentUsage(),
   recentSessions,
   backup: (projectPath) => (
     config.backupEnabled
@@ -936,6 +966,12 @@ const server = createServer({
     version: app.getVersion(),
     platform: process.platform,
     backupsOn: Boolean(config && config.backupEnabled),
+    // Which agent the phone's row tap and + sheet should offer, so it names
+    // and runs the same one this window does. The three fields it needs rather
+    // than an id: the phone is served out of mobile/www and the agent table is
+    // not, so an id would only be something for it to look up in a second copy
+    // of the table.
+    agent: agentSummary(),
   }),
   // Handy rather than necessary: pointing a phone browser at the same port is
   // the fastest way to find out whether the PC half of this is working, and it

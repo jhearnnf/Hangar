@@ -11,9 +11,10 @@
     </div>
     <div id="projectlist" class="projectlist"></div>
     <!-- What the machine is doing right now, which is a different question from
-         the usage bars below it: those are how much Claude you have left, this
-         is what the terminals are costing while they use it. Click for the
-         processes behind the line. -->
+         the usage bars below it: those are how much Claude you have left — and
+         are Claude Code's own numbers, so they are not there under another
+         agent — while this is what the terminals are costing whatever they are
+         running. Click for the processes behind the line. -->
     <button id="spark" class="spark" title="What the terminals are running (Ctrl+Shift+P)">
       <canvas id="sparkcanvas" class="spark-canvas"></canvas>
       <span class="spark-legend">
@@ -37,7 +38,8 @@
     </div>
 
     <div class="side-foot">
-      <span class="key">+</span> or double-click opens claude &middot; hold <span class="key">shift</span> for a shell
+      <span class="key">+</span> or double-click opens <span id="footagent">claude</span> &middot;
+      hold <span class="key">shift</span> for a shell
       <button id="opensettings" class="side-settings" title="Settings">Settings</button>
     </div>
   </aside>
@@ -74,10 +76,11 @@
   </main>
 </div>
 
-<!-- Right-clicking a project lists the claude sessions it has had, so one can be
+<!-- Right-clicking a project lists the sessions it has had with whichever agent
+     Settings names, so one can be
      picked up again. Outside #app because it is positioned against the window
      and must not be clipped by the sidebar it springs from. -->
-<div id="projectmenu" class="pmenu" hidden role="menu" aria-label="Recent claude sessions">
+<div id="projectmenu" class="pmenu" hidden role="menu" aria-label="Recent sessions">
   <div id="projectmenuhead" class="pmenu-head"></div>
   <div id="projectmenulist" class="pmenu-list"></div>
   <!-- Below the line, because everything above it opens a terminal and these
@@ -167,8 +170,8 @@
     <div id="procslist" class="procs-list"></div>
 
     <p class="procs-foot">
-      Grouped by the terminal that started it. The shell and <code>claude</code> itself are
-      not listed — everything here is something they went on to run. CPU is a share of the
+      Grouped by the terminal that started it. The shell and <code id="procsagent">claude</code>
+      itself are not listed — everything here is something they went on to run. CPU is a share of the
       whole machine.
     </p>
   </div>
@@ -189,6 +192,7 @@
          panel before they have used the thing. -->
     <div id="setuptabs" class="setup-tabs" hidden role="tablist">
       <button class="setup-tab" data-panel="projects" role="tab">Projects</button>
+      <button class="setup-tab" data-panel="agent" role="tab">Agent</button>
       <button class="setup-tab" data-panel="backups" role="tab">Backups</button>
       <button class="setup-tab" data-panel="phone" role="tab">Phone</button>
       <button class="setup-tab" data-panel="startup" role="tab">Startup</button>
@@ -207,6 +211,41 @@
         <button id="setupprojectsbrowse" class="modal-btn">Browse…</button>
       </div>
       <div id="setupprojectserror" class="modal-error"></div>
+    </div>
+
+    <!-- Agent ---------------------------------------------------------- -->
+    <div class="setup-field" data-panel="agent">
+      <span class="setup-label">What the + button opens</span>
+      <p class="setup-help">
+        Hangar runs whatever you type into a terminal and always did — both of these work in
+        a plain shell tab today. This is only about the one it opens for you without being
+        asked: the <b>+</b> on a project, a double-click on its name, and a tap on a project
+        from your phone.
+      </p>
+
+      <div class="setup-sub">
+        <label class="setup-check">
+          <input id="setupagentclaude" type="radio" name="agent" value="claude" />
+          <span>Claude Code — runs <code>claude</code></span>
+        </label>
+        <label class="setup-check">
+          <input id="setupagentcodex" type="radio" name="agent" value="codex" />
+          <span>Codex — runs <code>codex</code></span>
+        </label>
+      </div>
+
+      <p class="setup-help">
+        Whichever is picked, right-clicking a project lists that agent's own past sessions to
+        resume, the sidebar names its terminals the same way, and the process view still
+        shows what it has running underneath.
+      </p>
+
+      <p id="setupagentnote" class="setup-note" hidden></p>
+
+      <p class="setup-warn">
+        Terminals already open are left exactly as they are — this changes what the next one
+        runs, not what the running ones are. A tab with the other agent in it keeps working.
+      </p>
     </div>
 
     <div class="setup-field" data-panel="backups">
@@ -345,4 +384,5 @@
 <script src="../node_modules/@xterm/addon-unicode11/lib/addon-unicode11.js"></script>
 <script src="../project-name.js"></script>
 <script src="classify.js"></script>
+<script src="../agents.js"></script>
 <script src="renderer.js"></script>

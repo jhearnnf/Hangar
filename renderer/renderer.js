@@ -1,6 +1,6 @@
 'use strict';
 
-/* global Terminal, FitAddon, WebglAddon, SearchAddon, WebLinksAddon, Unicode11Addon, Classify, ProjectName */
+/* global Terminal, FitAddon, WebglAddon, SearchAddon, WebLinksAddon, Unicode11Addon, Classify, ProjectName, Agents */
 
 const api = window.hangar;
 const $ = (id) => document.getElementById(id);
@@ -28,7 +28,22 @@ let sidebarOpen = localStorage.getItem('sidebarOpen') !== '0';
 let zen = false;
 let fontSize = Number(localStorage.getItem('fontSize')) || 14;
 
-const DEFAULT_COMMAND = 'claude';
+/**
+ * Which agent the + button opens, out of the table in agents.js.
+ *
+ * Set from the saved settings during boot, and again whenever Settings saves,
+ * so every place that names it — the sidebar foot, the row tooltips, the
+ * right-click menu, the process panel — is painted from this one value rather
+ * than having the word written into the markup.
+ */
+let agent = Agents.get(Agents.DEFAULT);
+
+function setAgent(id) {
+  agent = Agents.get(id);
+  $('footagent').textContent = agent.label;
+  $('procsagent').textContent = agent.label;
+  $('projectmenu').setAttribute('aria-label', `Recent ${agent.label} sessions`);
+}
 
 // Silence for this long means a terminal has finished whatever it was doing —
 // which is now decided in the main process, since the phone has to agree with
@@ -134,16 +149,18 @@ function paintProject(projectPath) {
   paintProjectRow(projectPath);
 }
 
-// ------------------------------------------- recent claude sessions
+// ------------------------------------------------- recent agent sessions
 
 /**
- * Right-clicking a project lists the claude sessions it has had, so one can be
- * picked up where it was left.
+ * Right-clicking a project lists the sessions it has had, so one can be picked
+ * up where it was left.
  *
  * These are not Hangar's terminals — Hangar's are the rows under the twisty,
- * and they are all still running. These are claude's own, read out of the files
- * it keeps in ~/.claude, and every one of them is a conversation that has
- * already ended. Picking one runs `claude --resume` in a fresh terminal here.
+ * and they are all still running. These are the agent's own, read out of the
+ * files it keeps in its own home folder, and nearly every one of them is a
+ * conversation that has already ended. Picking one resumes it in a fresh
+ * terminal here, with a command built on the side of the bridge where the
+ * session id was checked.
  */
 
 const projectMenu = $('projectmenu');
@@ -206,7 +223,7 @@ function menuRow(project, row) {
     item.setAttribute('aria-disabled', 'true');
     item.tabIndex = -1;
     item.title = `${row.label}\n\nThis one is open now. Resuming it again would put two`
-      + ` claudes on the same conversation, so it has to be closed first.`;
+      + ` of them on the same conversation, so it has to be closed first.`;
     return item;
   }
 
@@ -242,13 +259,13 @@ async function openProjectMenu(project, x, y) {
   try {
     rows = await api.recentSessions(project.path);
   } catch (err) {
-    console.error('Hangar: could not read claude history', err);
+    console.error(`Hangar: could not read ${agent.label} history`, err);
     rows = [];
   }
   if (token !== menuToken) return;
 
   menuProject = project;
-  projectMenuHead.textContent = `Recent claude sessions — ${project.name}`;
+  projectMenuHead.textContent = `Recent ${agent.label} sessions — ${project.name}`;
   projectMenuList.textContent = '';
   paintRenameItem(project);
   paintDeleteItem(project);
@@ -648,13 +665,13 @@ function renderProject(project, wrap) {
 
   const row = document.createElement('div');
   row.className = 'project-row';
-  row.title = `${project.path}\nDouble-click for a claude terminal (shift for a plain shell)` +
-    '\nRight-click to resume an earlier claude session, or rename or delete the project' +
+  row.title = `${project.path}\nDouble-click for a ${agent.label} terminal (shift for a plain shell)` +
+    `\nRight-click to resume an earlier ${agent.label} session, or rename or delete the project` +
     (mine.length ? '\nArrow expands' : '');
   row.innerHTML =
     '<span class="twisty"></span><span class="pname"></span>' +
     '<span class="bsync"></span>' +
-    '<button class="add" title="New claude terminal here (shift-click for a plain shell)">+</button>';
+    `<button class="add" title="New ${agent.label} terminal here (shift-click for a plain shell)">+</button>`;
   row.querySelector('.pname').textContent = project.name;
   projectRows.set(project.path, row);
 
@@ -672,11 +689,11 @@ function renderProject(project, wrap) {
   }
   row.addEventListener('dblclick', (e) => {
     if (e.target.classList.contains('add') || e.target.classList.contains('twisty')) return;
-    newTerminal(project, e.shiftKey ? null : DEFAULT_COMMAND);
+    newTerminal(project, e.shiftKey ? null : agent.command);
   });
   row.querySelector('.add').addEventListener('click', (e) => {
     e.stopPropagation();
-    newTerminal(project, e.shiftKey ? null : DEFAULT_COMMAND);
+    newTerminal(project, e.shiftKey ? null : agent.command);
   });
   row.addEventListener('contextmenu', (e) => {
     e.preventDefault();
@@ -1004,8 +1021,8 @@ function openRenameProject(project) {
   renConfirm.textContent = RENAME_LABEL;
 
   // The backup half only while there is a backup folder for it to be true of.
-  renNote.textContent = 'The claude sessions offered for this project are found by folder path,'
-    + ' so there will be none to resume under the new name — claude’s own /resume still has them.'
+  renNote.textContent = `The ${agent.label} sessions offered for this project are found by folder path,`
+    + ` so there will be none to resume under the new name — ${agent.ownPicker} still has them.`
     + (backupsOn ? ' Anything already backed up stays under the old name, and the next backup makes a fresh copy.' : '');
 
   checkRename();
@@ -1302,7 +1319,7 @@ del.addEventListener('mousedown', (e) => {
 
 let idSeq = 0;
 
-async function newTerminal(project, command = DEFAULT_COMMAND) {
+async function newTerminal(project, command = agent.command) {
   expanded.add(project.path);
   // The sidebar is redrawn whatever happened. A throw on the way up used to
   // skip it, which left the tab that had already been built listed nowhere and
@@ -2112,9 +2129,10 @@ async function refreshUsage() {
 /**
  * The line above the usage bars, and the panel behind it.
  *
- * The usage bars answer "how much Claude is left"; this answers "what is that
- * costing right now", which is the question a terminal that has been quiet for
- * ten minutes while a fan spins up cannot answer on its own.
+ * The usage bars answer "how much Claude is left", where there are any to
+ * answer it; this answers "what is that costing right now", which is the
+ * question a terminal that has been quiet for ten minutes while a fan spins up
+ * cannot answer on its own.
  *
  * Drawing it costs one `os.cpus()` read in the main process, so it runs the
  * whole time the window is up. What it opens is not free and does not.
@@ -2477,6 +2495,8 @@ const remoteCodeNote = $('remotecodenote');
 const remoteDevices = $('remotedevices');
 const setupProjects = $('setupprojects');
 const setupProjectsError = $('setupprojectserror');
+const setupAgents = [...document.querySelectorAll('input[name="agent"]')];
+const setupAgentNote = $('setupagentnote');
 const setupBackup = $('setupbackup');
 const setupBackupBox = $('setupbackupbox');
 const setupBackupRoot = $('setupbackuproot');
@@ -2499,15 +2519,35 @@ function paintBackupBox() {
   setupBackupRoot.disabled = !setupBackup.checked;
 }
 
+// The consequence of each answer that is not obvious from the word itself.
+// Both are about the sidebar, which is where the difference actually shows.
+const AGENT_NOTES = {
+  claude: 'The 5h and 7d bars at the foot of the sidebar are Claude Code\u2019s own numbers, read'
+    + ' from its credentials on this machine — so they are there under this and nowhere else.',
+  codex: 'Codex publishes nothing the 5h and 7d bars could be read from, so the sidebar loses'
+    + ' them. Resuming works from Codex\u2019s own session files, but it keeps no record of which'
+    + ' sessions are open, so the menu cannot grey out one that is already running.',
+};
+
+function chosenAgent() {
+  const picked = setupAgents.find((radio) => radio.checked);
+  return Agents.get(picked && picked.value).id;
+}
+
+function paintAgentNote() {
+  setupAgentNote.textContent = AGENT_NOTES[chosenAgent()] || '';
+  setupAgentNote.hidden = !setupAgentNote.textContent;
+}
+
 function paintRemoteBox() {
   setupRemoteBox.classList.toggle('off', !setupRemote.checked);
   setupRemotePort.disabled = !setupRemote.checked || envLocked.remotePort;
   $('remotepair').disabled = !setupRemote.checked;
 }
 
-// --------------------------------------------------------- the four groups
+// --------------------------------------------------------- the five groups
 
-const PANELS = ['projects', 'backups', 'phone', 'startup'];
+const PANELS = ['projects', 'agent', 'backups', 'phone', 'startup'];
 let panel = 'projects';
 
 function showPanel(name, { firstRun = false } = {}) {
@@ -2793,6 +2833,16 @@ async function openSetup(state) {
   setupBackup.checked = everSaved ? config.backupEnabled : Boolean(suggested.dropbox);
   paintBackupBox();
 
+  // There is no answer here that does nothing, so this one opens on the saved
+  // choice on a first run as much as on any other — normalised through the
+  // table, so a config naming an agent this build has no row for still lands on
+  // a checked button rather than on none.
+  for (const radio of setupAgents) {
+    radio.checked = radio.value === Agents.get(config.agent).id;
+    radio.disabled = env.agent;
+  }
+  paintAgentNote();
+
   // Both of these are off until asked for, on a first run and on every run
   // after it, so there is nothing to guess at — they open on what was saved.
   setupRemote.checked = Boolean(config.remoteEnabled);
@@ -2817,6 +2867,7 @@ async function openSetup(state) {
     env.projectsRoot && 'the projects folder',
     env.backupRoot && 'the backup folder',
     env.remotePort && 'the phone port',
+    env.agent && 'the agent',
   ].filter(Boolean);
   setupProjects.disabled = env.projectsRoot;
   if (env.projectsRoot) setupProjects.value = config.projectsRoot;
@@ -2883,6 +2934,7 @@ async function submitSetup() {
       remotePort: Number(setupRemotePort.value),
       autoStart: setupAutoStart.checked,
       startMinimised: setupMinimised.checked,
+      agent: chosenAgent(),
     });
   } catch (err) {
     result = { ok: false, field: null, message: err.message };
@@ -2922,6 +2974,12 @@ async function submitSetup() {
  */
 async function applySettings(config) {
   backupsOn = config.backupEnabled;
+  // Before the sidebar is rebuilt below, since every project row's tooltip and
+  // + button is named after this.
+  setAgent(config.agent);
+  // The bars belong to one agent and not the other, so they go or come back on
+  // Save rather than at the next poll.
+  refreshUsage();
 
   const { projects: found, root, ignored } = await api.listProjects();
   projects = found;
@@ -2936,6 +2994,7 @@ async function applySettings(config) {
 setupSave.addEventListener('click', submitSetup);
 setupCancel.addEventListener('click', closeSetup);
 setupBackup.addEventListener('change', paintBackupBox);
+for (const radio of setupAgents) radio.addEventListener('change', paintAgentNote);
 setupRemote.addEventListener('change', paintRemoteBox);
 $('setupprojectsbrowse').addEventListener('click', () => browseFor(setupProjects, 'Where your projects live'));
 $('setupbackupbrowse').addEventListener('click', () => browseFor(setupBackupRoot, 'Where backups go'));
@@ -2956,6 +3015,7 @@ setup.addEventListener('mousedown', (e) => {
 
   const state = await api.getConfig();
   backupsOn = state.config.backupEnabled;
+  setAgent(state.config.agent);
 
   // Nothing has been answered yet, so there is no projects root to list and no
   // point drawing an empty sidebar behind the card. The rest of boot happens in

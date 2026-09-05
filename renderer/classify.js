@@ -32,6 +32,13 @@
 
   // Order here is irrelevant: whichever signal appears *latest* in the recent
   // output wins, because a TUI appends its newest activity at the bottom.
+  //
+  // The tool-call shapes below are Claude Code's, and are left as they are for
+  // another agent rather than swapped: a pattern that matches nothing costs a
+  // regex per window and colours nothing, whereas a wrong guess about what
+  // Codex prints would colour terminals wrongly. What still lands either way is
+  // the test runner — every agent echoes the command it is about to run — so a
+  // Codex tab goes green for a test suite and otherwise sits on ready.
   const SIGNALS = [
     {
       state: 'testing',
@@ -97,7 +104,7 @@
   // Titles that name the program rather than the work. Falling back to the
   // keystroke guess says more than "claude" repeated down the sidebar does.
   const GENERIC_TITLES = new Set([
-    'claude', 'claude code', 'cmd', 'cmd.exe', 'command prompt', 'powershell',
+    'claude', 'claude code', 'codex', 'cmd', 'cmd.exe', 'command prompt', 'powershell',
     'windows powershell', 'pwsh', 'bash', 'sh', 'zsh', 'fish', 'node',
     'select cmd.exe', 'administrator',
   ]);

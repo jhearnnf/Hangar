@@ -488,6 +488,11 @@ function createServer(deps) {
     running: () => Boolean(listening),
     clients: () => [...clients].filter((c) => c.device).map((c) => c.device),
     broadcastProjects: () => broadcast({ t: 'projects', ...listProjects() }),
+    // The half of the welcome that can change while a phone is connected —
+    // which agent the + button runs, whether backups are on. Sent again rather
+    // than waiting for a reconnect, so a phone cannot go on offering the agent
+    // this PC stopped using.
+    broadcastInfo: () => broadcast({ t: 'info', ...info() }),
     dispose() {
       stop();
       sessions.off('data', onSessionData);

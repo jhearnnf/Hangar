@@ -253,11 +253,12 @@ through, everything printed before `claude` started is still there when it exits
 
 The cog at the foot of the sidebar — and the one at the right-hand end of the tab strip,
 which is what you see when the sidebar is hidden, since settings must not be reachable only
-from a panel you can hide. Four groups behind it:
+from a panel you can hide. Five groups behind it:
 
 | Group | What is in it |
 | --- | --- |
 | **Projects** | The folder your projects live in |
+| **Agent** | Which coding agent the **+** button opens |
 | **Backups** | Whether to keep backup copies of them, and where |
 | **Phone** | Whether a phone may connect, on which port, and which phones may |
 | **Startup** | Whether to start with Windows, and whether to start into the tray |
@@ -273,7 +274,7 @@ written, the server comes up or goes down, and the tray icon appears or disappea
 settings screen that needed a restart to mean anything would be a settings screen nobody
 believed.
 
-`HANGAR_PROJECTS_ROOT` and `HANGAR_BACKUP_ROOT` still work and still win, field by field,
+`HANGAR_PROJECTS_ROOT`, `HANGAR_BACKUP_ROOT` and `HANGAR_AGENT` still work and still win, field by field,
 over whatever was saved. They are the escape hatch for a machine where the saved answer is
 wrong and the UI is not reachable, and they are how the tests point everything at a temp
 folder. A field the environment has taken over is shown in the setup screen as locked
@@ -285,6 +286,44 @@ The order is env var, then saved answer, then default — resolved per field in 
 so one variable never discards the rest. A config file that cannot be read, or that is
 missing the projects root, counts as a first run and asks again rather than quietly
 running on defaults nobody chose.
+
+## Which agent it opens
+
+Hangar runs whatever you type into a terminal and always has — `codex` worked in a tab here
+long before the setting did, the same way `npm test` does. The **Agent** group is only
+about the one it opens *for* you without being asked: the **+** on a project, a
+double-click on its name, and a tap on a project from your phone. Two rows today, `claude`
+and `codex`, and switching between them is one radio button.
+
+What follows the setting is everything that had the word written into it:
+
+- **The terminal that opens**, on the PC and on the phone alike. Hold `shift` for a plain
+  shell as before.
+- **The resume menu.** Right-clicking a project lists that agent's own past sessions — see
+  [Picking up where you left off](#picking-up-where-you-left-off).
+- **Everything that names it**: the hint at the foot of the sidebar, the project tooltips,
+  the heading on the right-click menu, the phone's sheet.
+
+What does not:
+
+- **Terminals already open.** The setting changes what the next one runs, not what the
+  running ones are. A `claude` tab under a Codex setting keeps working, and the process
+  view keeps stepping over both — `agents.js` hands it every agent's process names rather
+  than the chosen one's, so neither is ever mistaken for a job its own tab started.
+- **The usage bars**, which only exist for Claude Code — see
+  [Claude usage bars](#claude-usage-bars). Under Codex the block simply is not there, and
+  the endpoint is not asked.
+- **The colours in the sidebar.** The tool-call patterns in `classify.js` are Claude Code's
+  shape and are left alone rather than guessed at for another agent: a pattern that matches
+  nothing costs a regex and colours nothing, whereas a wrong guess would colour terminals
+  wrongly. What lands either way is the test runner, since every agent echoes the command
+  it is about to run.
+
+The whole table is `agents.js` — one row per agent, loaded by the main process and the
+renderer alike so neither can hold its own idea of what is running. A second agent is a row
+there rather than a search through six files. `HANGAR_AGENT=codex` overrides the saved
+answer for a session, and an id there is no row for falls back to `claude` rather than
+refusing to open a window.
 
 ## Hangar on your phone
 
@@ -474,25 +513,33 @@ they would be listing the same terminals twice.
 
 ### Picking up where you left off
 
-Right-clicking a project lists the claude sessions it has already had, newest first, named
-after the first thing you asked each one and dated by the last. Clicking one opens a
-terminal running `claude --resume` on it, so the conversation carries on rather than
-starting again.
+Right-clicking a project lists the sessions it has already had with whichever agent
+[Settings](#which-agent-it-opens) names, newest first, named after the first thing you
+asked each one and dated by the last. Clicking one opens a terminal that resumes it, so the
+conversation carries on rather than starting again.
 
-None of that is Hangar's own record — it is claude's, read on the click out of two files it
-keeps in `~/.claude`: `history.jsonl` for the prompts, and one file per running process in
-`sessions/` for what is live right now. Nothing is written back, only the last couple of
-megabytes of the history is read, and anything unrecognised in either file leaves the menu
-empty rather than breaking the sidebar; both belong to Claude Code and neither is a promise
-to us.
+None of that is Hangar's own record — it is the agent's, read on the click out of the files
+it keeps, and nothing is written back. Under Claude Code that is two files in `~/.claude`:
+`history.jsonl` for the prompts, and one file per running process in `sessions/` for what
+is live right now. Under Codex it is `~/.codex/history.jsonl` for the prompts and the
+`session_meta` line at the head of each `sessions/YYYY/MM/DD/rollout-*.jsonl` for the
+folder each one was started in, since Codex's history does not record a folder and its
+rollouts do. Only the last couple of megabytes of history is read, only the newest few
+hundred rollout heads are opened, and anything unrecognised in any of it leaves the menu
+empty rather than breaking the sidebar; all of these files belong to the agent and none of
+them is a promise to us.
 
-A session that is already open — in Hangar, in another window, anywhere on the machine —
-is listed but greyed out, with a pulsing green **live** beside it. Opening it again would
-put two claudes on one transcript, both appending. Close it and it becomes clickable.
+Under Claude Code, a session that is already open — in Hangar, in another window, anywhere
+on the machine — is listed but greyed out, with a pulsing green **live** beside it. Opening
+it again would put two of them on one transcript, both appending. Close it and it becomes
+clickable. Codex publishes no record of which sessions are running, so nothing there can be
+greyed out and the menu will offer one that is already up.
 
 The list skips the empty session ids that `/resume` leaves behind: typing `/resume` starts
 a session, records that one word against it and immediately jumps somewhere else, so the
-menu would otherwise be half full of rows that all said "/resume" and led to nothing.
+menu would otherwise be half full of rows that all said "/resume" and led to nothing. The
+same rule keeps a Codex session made of nothing but `/diff` and `/status` from being named
+after one.
 
 The phone has the same list behind a long press — see [Resuming from the
 phone](#resuming-from-the-phone). One reader on the PC answers both.
@@ -676,7 +723,10 @@ release is allowed to break this feature; it is not allowed to break Hangar. The
 also absent for anyone not signed in with a subscription — API-key, Bedrock and Vertex
 setups have no credentials file to read.
 
-Being part of the sidebar, they hide with it on `Ctrl+Shift+E`.
+Being part of the sidebar, they hide with it on `Ctrl+Shift+E` — and they are not there at
+all under another agent, since these are Claude Code's own numbers and there is nothing
+equivalent to read. With Codex selected the endpoint is not asked rather than asked and
+ignored: the token is not ours to spend on a question nobody is looking at.
 
 ## What the terminals are running
 

@@ -66,6 +66,12 @@ let rawMode = store.get('rawMode', false);
 let claimSize = store.get('claimSize', true);
 let pcName = '';
 
+// Which agent the PC opens for you, sent with the welcome and again whenever
+// its Settings change. Only ever what the PC last said: this is one setting for
+// the machine, and a phone with an opinion of its own about it would be a way
+// to start the wrong one from across the room.
+let agent = { id: 'claude', label: 'claude', command: 'claude' };
+
 // Whether this phone has ever got as far as a welcome from this PC. It decides
 // whether a dropped connection is a note in the header or a trip back to the
 // form — the difference between "the wifi blinked" and "this has never worked".
@@ -85,6 +91,7 @@ const client = createClient({
   newProject: onNewProject,
   recent: onRecent,
   usage: onUsage,
+  info: onInfo,
   error: (m) => toast(m.message),
 });
 
@@ -139,6 +146,7 @@ function onState(state) {
 
 function onWelcome(message) {
   pcName = message.name || 'the PC';
+  if (message.agent) agent = message.agent;
   everConnected = true;
   store.set('host', host);
   store.set('port', port);
@@ -350,22 +358,22 @@ function paintProjects() {
     row.querySelector('.row-name').textContent = project.name;
     row.querySelector('.row-count').textContent = mine.length ? String(mine.length) : '';
 
-    // Tapping the row opens a claude terminal, which is what you came for.
+    // Tapping the row opens an agent terminal, which is what you came for.
     // The + offers the choice of a plain shell, and holding the row offers the
-    // claude sessions this project has already had — the phone's answer to the
+    // sessions this project has already had — the phone's answer to the
     // right-click menu in the PC's sidebar.
     wireRowGestures(row, {
       tap: (e) => {
         if (e.target.closest('.row-add')) return;
         if (mine.length) openTerminal(mine[0].id);
-        else newTerminal(project, 'claude');
+        else newTerminal(project, agent.command);
       },
       hold: () => askRecent(project),
     });
     row.querySelector('.row-add').addEventListener('click', (e) => {
       e.stopPropagation();
       sheet(`New terminal in ${project.name}`, [
-        { label: 'Run claude', run: () => newTerminal(project, 'claude') },
+        { label: `Run ${agent.label}`, run: () => newTerminal(project, agent.command) },
         { label: 'Plain shell', run: () => newTerminal(project, null) },
         { label: 'Back up this project now', run: () => client.send({ t: 'backup', projectPath: project.path }) },
       ]);
@@ -516,7 +524,7 @@ function ago(at) {
 let recentWaiting = null;
 
 function recentTitle(project) {
-  return `Resume claude in ${project.name}`;
+  return `Resume ${agent.label} in ${project.name}`;
 }
 
 function askRecent(project) {
@@ -545,7 +553,7 @@ function onRecent(message) {
     note: ago(row.at),
     live: row.live,
     // A session that is already running is shown and not resumed: opening it
-    // again would put two claudes on the one conversation, both appending.
+    // again would put two of them on the one conversation, both appending.
     // It still answers the tap, because a row that did nothing at all on a
     // phone — where there is no tooltip to hover for the reason — would just
     // look broken.
@@ -553,6 +561,18 @@ function onRecent(message) {
       ? () => toast('That one is open already. Close it and it can be resumed.')
       : () => newTerminal(project, row.command),
   })));
+}
+
+/**
+ * The PC's settings changed while we were connected.
+ *
+ * Only the half of the welcome that can change under a live connection, which
+ * today is which agent the + opens. Repainting the project list is what puts
+ * the new name on the buttons.
+ */
+function onInfo(message) {
+  if (message.agent) agent = message.agent;
+  paintProjects();
 }
 
 function newTerminal(project, command) {
@@ -1019,9 +1039,9 @@ window.addEventListener('resize', () => { if (openId) fitTerminal(); });
 
 // What each key on the strip actually sends. Arrows and Esc are the ones a
 // phone keyboard simply does not have; 1, 2 and 3 are there because they are
-// the answers to Claude's permission prompts and hunting for them on a number
+// the answers to an agent's permission prompts and hunting for them on a number
 // row you have to switch layouts to reach is the single most annoying thing
-// about driving Claude from a phone.
+// about driving an agent from a phone.
 const KEYS = {
   esc: '',
   tab: '\t',
@@ -1112,7 +1132,7 @@ function applyInputMode() {
  * The bottom sheet, which is this app's only menu.
  *
  * An item is `{ label, run }` at its simplest. Two extras exist for the list of
- * past claude sessions, which needs more than a line of text per row: `note`
+ * past agent sessions, which needs more than a line of text per row: `note`
  * puts a quiet second column on the right — how long ago it was — and `live`
  * replaces that with a pulsing green mark. An item with no `run` cannot be
  * tapped, which is how both a live session and an empty list are said.

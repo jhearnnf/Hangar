@@ -3,6 +3,8 @@
 const os = require('os');
 const { spawn } = require('child_process');
 
+const Agents = require('./agents');
+
 /**
  * What the terminals are actually running, underneath the terminals.
  *
@@ -51,7 +53,12 @@ const MIN_AGE_MS = 1500;
 // Never worth a row of its own. The shell and the agent are on every session by
 // definition, so listing them would be listing the furniture; conhost is
 // Windows' own console host, attached to things rather than doing anything.
-const AGENT_NAMES = new Set(['claude', 'claude.exe']);
+//
+// Every agent Hangar knows how to open, not only the one Settings currently
+// says: switching agents leaves the terminals already running the other one
+// alone, and a `claude` under a Codex setting is still the furniture of its own
+// tab rather than a job that tab started.
+const AGENT_NAMES = new Set(Agents.processNames());
 const HIDDEN_NAMES = new Set(['conhost.exe', 'openconsole.exe']);
 
 // Below a job root, this many children sharing one name stop being interesting
@@ -221,10 +228,10 @@ function isHidden(row) {
  * The jobs running under one terminal.
  *
  * A session's own pid is its shell, and directly under that is almost always
- * `claude` itself. Neither is a job — they are what a terminal *is* — so both
+ * the agent itself. Neither is a job — they are what a terminal *is* — so both
  * are stepped through rather than reported, and what comes out is the first
  * layer of things that are actually work: the `npm run dev`, the `pytest`, the
- * `powershell -Command` behind one of Claude's tool calls.
+ * `powershell -Command` behind one of the agent's tool calls.
  *
  * A plain shell tab works out of the same rule with no special case: nothing
  * there is an agent, so the job roots are simply whatever was typed.

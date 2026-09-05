@@ -96,6 +96,14 @@ describe('parseConfig', () => {
     }));
     expect(saved).toEqual({ projectsRoot: PROJECTS });
   });
+
+  it('reads back an agent it has a row for, and ignores one it does not', () => {
+    // The string names the program the + button runs, so it is checked against
+    // the table rather than kept as typed.
+    expect(parseConfig(JSON.stringify({ projectsRoot: PROJECTS, agent: 'codex' })).agent).toBe('codex');
+    expect(parseConfig(JSON.stringify({ projectsRoot: PROJECTS, agent: 'rm -rf /' })).agent)
+      .toBeUndefined();
+  });
 });
 
 describe('resolveConfig', () => {
@@ -149,6 +157,29 @@ describe('resolveConfig', () => {
 
   it('defaults backups to off, since they write to disk', () => {
     expect(DEFAULTS.backupEnabled).toBe(false);
+  });
+
+  it('runs on the saved agent, and on claude when nobody has said', () => {
+    expect(resolveConfig({ projectsRoot: PROJECTS, agent: 'codex' }, { env: {}, defaults }).agent)
+      .toBe('codex');
+    expect(resolveConfig({ projectsRoot: PROJECTS }, { env: {}, defaults }).agent).toBe('claude');
+  });
+
+  it('gives the agent the same environment escape hatch as the folders', () => {
+    const c = resolveConfig(
+      { projectsRoot: PROJECTS, agent: 'claude' },
+      { env: { HANGAR_AGENT: 'codex' }, defaults },
+    );
+    expect(c.agent).toBe('codex');
+  });
+
+  it('falls back rather than refusing over an agent it has never heard of', () => {
+    // A hand-edited file, or a config written by a later release. Neither is
+    // worth a window that will not open a terminal.
+    expect(resolveConfig({ projectsRoot: PROJECTS, agent: 'gpt-9' }, { env: {}, defaults }).agent)
+      .toBe('claude');
+    expect(resolveConfig({ projectsRoot: PROJECTS }, { env: { HANGAR_AGENT: 'gpt-9' }, defaults }).agent)
+      .toBe('claude');
   });
 });
 
@@ -254,5 +285,22 @@ describe('validateConfig', () => {
       { exists },
     );
     expect(res.config.backupRoot).toBe(BACKUPS);
+  });
+
+  it('saves the agent that was picked, and never one it has no row for', () => {
+    const picked = validateConfig(
+      { projectsRoot: PROJECTS, backupEnabled: false, agent: 'codex' },
+      { exists },
+    );
+    expect(picked.config.agent).toBe('codex');
+
+    // Nothing in the card can submit this, but the field arrives over the
+    // bridge and ends up on a command line, so it is not taken on trust.
+    const nonsense = validateConfig(
+      { projectsRoot: PROJECTS, backupEnabled: false, agent: 'codex; shutdown /s' },
+      { exists },
+    );
+    expect(nonsense.ok).toBe(true);
+    expect(nonsense.config.agent).toBe('claude');
   });
 });

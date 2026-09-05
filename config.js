@@ -4,6 +4,8 @@ const os = require('os');
 const path = require('path');
 const fs = require('fs');
 
+const { DEFAULT: DEFAULT_AGENT, isAgentId } = require('./agents');
+
 /**
  * The handful of settings that used to be environment variables.
  *
@@ -37,6 +39,10 @@ const DEFAULTS = {
   remotePort: DEFAULT_REMOTE_PORT,
   autoStart: false,
   startMinimised: false,
+  // Which agent the + button opens. Not in that group: it changes nothing
+  // outside this window and there is no answer that does nothing, so it starts
+  // on the one most people here are running rather than on nobody.
+  agent: DEFAULT_AGENT,
 };
 
 /**
@@ -101,6 +107,10 @@ function parseConfig(raw) {
   if (Number.isInteger(saved.remotePort)) out.remotePort = saved.remotePort;
   if (typeof saved.autoStart === 'boolean') out.autoStart = saved.autoStart;
   if (typeof saved.startMinimised === 'boolean') out.startMinimised = saved.startMinimised;
+  // Checked against the table rather than kept as typed: this string names the
+  // program the + button runs, and the only names it is allowed to name are
+  // ones Hangar ships a row for.
+  if (isAgentId(saved.agent)) out.agent = saved.agent;
 
   // The projects root is the one answer the setup screen always writes, so a
   // file without a usable one was not written by it — an empty object, or a
@@ -152,6 +162,12 @@ function resolveConfig(saved, { env = process.env, defaults = DEFAULTS } = {}) {
       : (typeof from.remoteEnabled === 'boolean' ? from.remoteEnabled : defaults.remoteEnabled),
     remotePort: validPort(port) ? port : defaults.remotePort,
     autoStart: typeof from.autoStart === 'boolean' ? from.autoStart : defaults.autoStart,
+
+    // Same escape hatch again, and the same fallback as everywhere else this
+    // id is read: an agent Hangar has no row for is not an error to refuse
+    // over, it is a machine that should still open a terminal.
+    agent: isAgentId(env.HANGAR_AGENT) ? env.HANGAR_AGENT
+      : (isAgentId(from.agent) ? from.agent : defaults.agent),
     // Minimised has nothing to be minimised *from* unless something starts it,
     // so it only means anything alongside autoStart.
     startMinimised: Boolean(
@@ -219,6 +235,7 @@ function validateConfig(input, deps = {}) {
     remotePort: port,
     autoStart: Boolean(given.autoStart),
     startMinimised: Boolean(given.startMinimised),
+    agent: isAgentId(given.agent) ? given.agent : DEFAULTS.agent,
   };
 
   const enabled = Boolean(given.backupEnabled);

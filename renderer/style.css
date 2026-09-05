@@ -967,6 +967,10 @@ button.proc-row:hover { background: #1a1e26; }
 
 .setup-check input { accent-color: var(--accent); cursor: pointer; }
 
+/* Two of these in a row is a choice between them — the agent panel — rather
+   than two independent switches, which everywhere else has help text between. */
+.setup-check + .setup-check { margin-top: 6px; }
+
 /* Dimmed rather than hidden when backups are off: the folder stays visible so
    turning them back on is one click, and the block does not jump about. */
 .setup-sub { margin-top: 4px; }
