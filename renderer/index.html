@@ -84,9 +84,13 @@
   <div id="projectmenuhead" class="pmenu-head"></div>
   <div id="projectmenulist" class="pmenu-list"></div>
   <!-- Below the line, because everything above it opens a terminal and these
-       two are about the folder itself. The delete is last on purpose: it is the
-       only item in here that cannot be undone by clicking again. -->
+       three are about the folder itself. Ordered by how much they change: the
+       first only looks at the folder, and the delete is last on purpose, being
+       the only item in here that cannot be undone by clicking again. -->
   <div class="pmenu-foot">
+    <button id="projectopen" class="pmenu-item" type="button" role="menuitem">
+      <span class="pmenu-label">Open folder</span>
+    </button>
     <button id="projectrename" class="pmenu-item" type="button" role="menuitem">
       <span class="pmenu-label">Rename project…</span>
     </button>

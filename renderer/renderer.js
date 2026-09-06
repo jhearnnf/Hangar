@@ -166,6 +166,7 @@ function paintProject(projectPath) {
 const projectMenu = $('projectmenu');
 const projectMenuHead = $('projectmenuhead');
 const projectMenuList = $('projectmenulist');
+const projectOpen = $('projectopen');
 const projectRename = $('projectrename');
 const projectDelete = $('projectdelete');
 
@@ -267,6 +268,7 @@ async function openProjectMenu(project, x, y) {
   menuProject = project;
   projectMenuHead.textContent = `Recent ${agent.label} sessions — ${project.name}`;
   projectMenuList.textContent = '';
+  paintOpenItem(project);
   paintRenameItem(project);
   paintDeleteItem(project);
 
@@ -294,6 +296,36 @@ document.addEventListener('mousedown', (e) => {
 window.addEventListener('blur', closeProjectMenu);
 window.addEventListener('resize', closeProjectMenu);
 projectlist.addEventListener('scroll', closeProjectMenu);
+
+// Windows opens folders in File Explorer, macOS in Finder, and the rest in
+// whatever the desktop has — so the tooltip names the one this machine will
+// actually put on screen, the same way the delete names its own wastebasket.
+const FILER = api.platform === 'win32' ? 'File Explorer'
+  : api.platform === 'darwin' ? 'Finder'
+  : 'your file manager';
+
+/**
+ * Point the "open folder" item at this project.
+ *
+ * Never refused the way the rename and the delete are: looking at a folder
+ * cannot fail because a terminal is sitting in it, and it is the one thing
+ * still worth offering while the project is busy.
+ */
+function paintOpenItem(project) {
+  projectOpen.title = `${project.path}
+
+Opens it in ${FILER}.`;
+}
+
+projectOpen.addEventListener('click', () => {
+  const project = menuProject;
+  closeProjectMenu();
+  // Nothing comes back to check: the folder is one the sidebar has just
+  // listed, so the only way this misses is the folder going away in the second
+  // between the right-click and the click, and the watcher takes the row with
+  // it when that happens.
+  if (project) api.reveal(project.path);
+});
 
 /**
  * Offer the rename, or say why it is not being offered.
@@ -666,7 +698,7 @@ function renderProject(project, wrap) {
   const row = document.createElement('div');
   row.className = 'project-row';
   row.title = `${project.path}\nDouble-click for a ${agent.label} terminal (shift for a plain shell)` +
-    `\nRight-click to resume an earlier ${agent.label} session, or rename or delete the project` +
+    `\nRight-click to resume an earlier ${agent.label} session, open the folder, or rename or delete it` +
     (mine.length ? '\nArrow expands' : '');
   row.innerHTML =
     '<span class="twisty"></span><span class="pname"></span>' +
