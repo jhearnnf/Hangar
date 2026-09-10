@@ -9,6 +9,24 @@
       <span class="side-title">Projects</span>
       <button id="sidecollapse" class="icon" title="Hide projects (Ctrl+Shift+E)">&#171;</button>
     </div>
+    <!-- Only on screen once a usage window is actually spent, which is the one
+         moment the sidebar has something more urgent to say than which project
+         is which. It sits above the list rather than beside the bars at the
+         bottom because the list is what it is greying out, and an explanation
+         belongs in front of the thing it explains. -->
+    <div id="capped" class="capped-banner" hidden>
+      <div class="capped-head">
+        <span class="capped-dot"></span>
+        <span id="cappedtitle" class="capped-title" role="status"></span>
+      </div>
+      <!-- The countdown is the whole point of the panel, so it is the biggest
+           thing in the sidebar while it is up. Not a live region: it changes
+           every second, and a screen reader reading each tick aloud would be
+           the opposite of helpful. The title above it announces once. -->
+      <div id="cappedclock" class="capped-clock" aria-hidden="true"></div>
+      <div id="cappedwhen" class="capped-when"></div>
+    </div>
+
     <div id="projectlist" class="projectlist"></div>
     <!-- What the machine is doing right now, which is a different question from
          the usage bars below it: those are how much Claude you have left — and
@@ -49,6 +67,14 @@
       <button id="sideexpand" class="icon" title="Show projects (Ctrl+Shift+E)">&#187;</button>
       <div id="tablist" class="tablist"></div>
       <button id="newtab" class="newtab" title="New terminal (Ctrl+Shift+T)">+</button>
+      <!-- The same message as the sidebar banner, folded down to fit here. It
+           carries it whenever the sidebar is put away, which is the only time
+           this strip is on screen at all — so the two are never both up, and
+           there is no state to keep in step. -->
+      <div id="cappedpill" class="capped-pill" hidden>
+        <span class="capped-dot"></span>
+        <span id="cappedpilltext"></span>
+      </div>
       <!-- The same cog again, because the one in the sidebar goes away with the
            sidebar and settings must not be reachable only from a panel you can
            hide. Never both on screen at once: the tab strip and the sidebar

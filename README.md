@@ -701,11 +701,28 @@ Above the hint line at the foot of the sidebar sit two thin bars: how much of th
 amber past 75% and red past 90%.
 
 Running one of them out is different in kind from filling it up: until that window resets,
-no project here can be worked on. So at 100% the project list itself gently pulses a red
-mist, and the note underneath names the window that went — `5h limit reached · resets in
-2h 41m`. Whichever project you were about to reach for is already under the glow, which a
-full bar at the foot of the sidebar cannot say. It holds through a failed poll, and stops
-moving (without going away) if the machine asks for reduced motion.
+no project here can be worked on. So at 100% the sidebar stops being a list of projects and
+becomes a countdown.
+
+A panel takes the top of it, above the list, saying which window went (`5-Hour limit
+reached`, or `Weekly`), then the time left in the largest type in the app, then the clock
+time it lands at — `2h 14m`, `until it resets, at 16:20`. Inside the last hour it switches
+to minutes and seconds and visibly ticks, because a number that only moves once a minute is
+not one anybody trusts. It runs on its own second-by-second clock rather than waiting for
+the next poll, and once the reset time passes it quietly asks for fresh figures until the
+window really has reopened.
+
+Underneath it, every project and terminal in the list goes grey and the list itself gently
+pulses a red mist. The stage colours are all about what to look at next, and while nothing
+can be started there is nothing for them to report — so the one thing left with any colour
+in the sidebar is the countdown. The rows stay clickable throughout: this says "not yet",
+not "not allowed", and a terminal already open is still worth reading back.
+
+Put the sidebar away and the tab strip carries the same thing folded down to a pill —
+`5h · 47:23` — since the strip is only on screen while the sidebar is hidden, the two are
+never both up. All of it holds through a failed poll, and stops moving (without going away)
+if the machine asks for reduced motion; the countdown keeps ticking either way, being text
+rather than motion and the part actually being waited on.
 
 The figures come from the same endpoint Claude Code's own `/usage` screen reads, using the
 OAuth token Claude Code already keeps in `~/.claude/.credentials.json`. That file is read

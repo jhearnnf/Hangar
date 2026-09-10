@@ -2081,6 +2081,11 @@ const usageBars = {
 // The same short names the rows are labelled with, for the note below them.
 const USAGE_LABELS = { fiveHour: '5h', sevenDay: '7d' };
 
+// Said in full in the banner, which has the room for it and is being read once
+// rather than glanced at — "7d" next to a bar is a label, but "7d limit
+// reached" as the headline of a panel is a riddle.
+const CAPPED_TITLES = { fiveHour: '5-hour limit reached', sevenDay: 'Weekly limit reached' };
+
 // Asked for more often than the main process will actually fetch, because the
 // countdown below has to keep moving between polls. The extra calls are served
 // from the cache over there and never touch the network.
@@ -2112,6 +2117,140 @@ function drawBar({ fill, pct }, window) {
   pct.textContent = `${Math.round(window.used)}%`;
 }
 
+// ---------------------------------------------------------- the limit hit
+
+/**
+ * The banner, the pill, and the grey the sidebar goes while a usage window is
+ * spent.
+ *
+ * A full bar and a red mist say "something is up"; neither says the one thing
+ * actually worth knowing, which is when it stops. So the countdown gets a
+ * panel of its own, at the top of the sidebar, in the largest type in the app —
+ * and it ticks on its own clock rather than waiting on the next poll, because a
+ * number that only moves once a minute is not one anybody trusts.
+ *
+ * The pill in the tab strip is the same message folded down. The strip is only
+ * on screen while the sidebar is put away, so the two can never both be up.
+ */
+
+const cappedBox = $('capped');
+const cappedTitle = $('cappedtitle');
+const cappedClock = $('cappedclock');
+const cappedWhen = $('cappedwhen');
+const cappedPill = $('cappedpill');
+const cappedPillText = $('cappedpilltext');
+
+// The window that ran out, and when it lets go — null while there is headroom.
+let capped = null;
+let cappedTimer = null;
+
+// Once the reset time has been and gone, the figures we are counting from are
+// the stale side of history: the window has almost certainly reopened and only
+// a fresh poll can say so. Asked for on this rhythm rather than every tick,
+// since the main process is holding its own answer for two minutes anyway.
+const CAPPED_RECHECK_MS = 20_000;
+let recheckAt = 0;
+
+/** The clock time a reset lands at, as the machine writes times. */
+function formatAt(ms) {
+  return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+/**
+ * The countdown itself: "2h 14m" while there is more than an hour to go, then
+ * "47:23" once there is not.
+ *
+ * Switching to minutes and seconds for the last hour is the whole reason this
+ * is not just `formatIn`. An hour out, the minute is all anyone can use; inside
+ * it, a figure that visibly moves is the difference between waiting and
+ * wondering whether the thing is still running.
+ */
+function formatCountdown(ms) {
+  if (!Number.isFinite(ms)) return null;
+  if (ms <= 0) return 'any moment';
+
+  const secs = Math.ceil(ms / 1000);
+  if (secs >= 3600) return formatIn(ms);
+
+  const mins = Math.floor(secs / 60);
+  return `${mins}:${String(secs % 60).padStart(2, '0')}`;
+}
+
+/** Redraw the banner and the pill from `capped` and the current time. */
+function drawCapped() {
+  const on = !!capped;
+
+  cappedBox.hidden = !on;
+  cappedPill.hidden = !on;
+  projectlist.classList.toggle('capped', on);
+  tabbar.classList.toggle('capped', on);
+  if (!on) return;
+
+  // Only when it has actually changed. This is a live region, and rewriting it
+  // with the same string once a second would have a screen reader announce the
+  // limit over and over for as long as the wait lasts.
+  const title = CAPPED_TITLES[capped.window];
+  if (cappedTitle.textContent !== title) cappedTitle.textContent = title;
+
+  // A window whose reset time we could not read is still worth the banner —
+  // the limit is real either way — but there is no honest number to put in it.
+  if (!capped.resetsAt) {
+    cappedClock.textContent = '—';
+    cappedWhen.textContent = 'until the window resets';
+    cappedPillText.textContent = `${USAGE_LABELS[capped.window]} limit reached`;
+    cappedPill.title = CAPPED_TITLES[capped.window];
+    return;
+  }
+
+  const left = capped.resetsAt - Date.now();
+  const clock = formatCountdown(left);
+
+  cappedClock.textContent = clock;
+  cappedWhen.textContent = left > 0
+    ? `until it resets, at ${formatAt(capped.resetsAt)}`
+    : 'checking for the reset…';
+  cappedPillText.textContent = `${USAGE_LABELS[capped.window]} · ${clock}`;
+
+  // The pill is three or four characters of room, so the sentence it is
+  // standing in for lives in its tooltip.
+  cappedPill.title = left > 0
+    ? `${CAPPED_TITLES[capped.window]} — resets at ${formatAt(capped.resetsAt)}`
+    : `${CAPPED_TITLES[capped.window]} — checking for the reset`;
+
+  // Past the reset and still being told we are capped means the figures in
+  // hand are older than the window they describe. Ask for new ones.
+  if (left <= 0 && Date.now() >= recheckAt) {
+    recheckAt = Date.now() + CAPPED_RECHECK_MS;
+    refreshUsage();
+  }
+}
+
+/**
+ * Take up, or put down, the whole capped presentation.
+ *
+ * The ticker only exists while a limit is actually spent, so the ordinary case
+ * — which is every hour of most days — costs nothing at all.
+ */
+function setCapped(which, resetsAt) {
+  if (!which) {
+    capped = null;
+    if (cappedTimer) { clearInterval(cappedTimer); cappedTimer = null; }
+    drawCapped();
+    return;
+  }
+
+  // Only a genuinely new wait — a different window, or a reset time that has
+  // moved — starts the recheck rhythm over. Every poll while capped arrives
+  // here saying the same thing, and letting those reset the throttle would put
+  // the ticker and the poll in a loop asking each other once a second.
+  const at = resetsAt || null;
+  if (!capped || capped.window !== which || capped.resetsAt !== at) recheckAt = 0;
+
+  capped = { window: which, resetsAt: at };
+  if (!cappedTimer) cappedTimer = setInterval(drawCapped, 1000);
+  drawCapped();
+}
+
 async function refreshUsage() {
   let usage;
   try {
@@ -2124,7 +2263,7 @@ async function refreshUsage() {
   // sidebar goes back to ending on the hint line.
   usageBox.hidden = !usage || !usage.available;
   if (usageBox.hidden) {
-    projectlist.classList.remove('capped');
+    setCapped(null, null);
     return;
   }
 
@@ -2132,19 +2271,19 @@ async function refreshUsage() {
   drawBar(usageBars.sevenDay, usage.sevenDay);
 
   // A window at 100% means no project can be worked on until it resets, which
-  // the bars alone say too quietly. The list of projects glows for it instead —
-  // whichever project you were about to reach for is already under the mist.
-  const capped = USAGE_LABELS[usage.capped] ? usage.capped : null;
-  projectlist.classList.toggle('capped', !!capped);
+  // the bars alone say far too quietly. The banner takes it over from here.
+  const spent = USAGE_LABELS[usage.capped] ? usage.capped : null;
+  setCapped(spent, spent ? usage[spent].resetsAt : null);
 
   const parts = [];
-  if (capped) parts.push(`${USAGE_LABELS[capped]} limit reached`);
 
-  // Normally the 5h window is the one worth counting down. Once a window has
-  // run out, its own reset is the only time that means anything.
-  const counting = usage[capped || 'fiveHour'];
-  const resets = counting && formatIn(counting.resetsAt - Date.now());
-  if (resets) parts.push(`resets in ${resets}`);
+  // Only while there is headroom left. Once a window is spent the banner is
+  // saying all of this in a size worth reading, and repeating it down here in
+  // 9px grey would only be somewhere else to have to look.
+  if (!spent) {
+    const resets = usage.fiveHour && formatIn(usage.fiveHour.resetsAt - Date.now());
+    if (resets) parts.push(`resets in ${resets}`);
+  }
 
   // Only mentioned once the figures are actually old — during a rate-limit or
   // an outage these are the last good ones rather than the current ones, and
@@ -2154,6 +2293,7 @@ async function refreshUsage() {
   }
 
   usageNote.textContent = parts.join(' · ');
+  usageNote.hidden = parts.length === 0;
 }
 
 // ----------------------------------------------------------------- resources

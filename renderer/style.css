@@ -207,6 +207,11 @@ html, body {
   line-height: 1.5;
 }
 
+/* Nothing to say happens often — most of the time the bars are simply current
+   and not near anything. Hidden rather than left empty so the rows above do
+   not carry a stray 4px of gap under them. */
+.usage-note[hidden] { display: none; }
+
 .side-foot {
   flex: 0 0 auto;
   padding: 8px 12px;
@@ -232,6 +237,8 @@ html, body {
   padding: 4px 0;
 }
 
+/* ------------------------------------------------- the limit is reached */
+
 /* Either limit spent means no project here can be worked on until the window
    resets, so the whole list of them breathes red. Both paints are on the
    element's own box rather than on its contents, so the mist stays put while
@@ -254,13 +261,115 @@ html, body {
   }
 }
 
-/* Still unmistakably red, just no longer moving. */
+/* And every project and terminal in it goes grey, because none of them can be
+   worked on until the countdown above runs out — so the stage colours, which
+   are all about what to look at next, have nothing to report. Applied to the
+   rows rather than the list, so the red the list is breathing is not itself
+   drained by the filter. Still fully clickable: this says "not yet", not "not
+   allowed", and a terminal already open is still worth reading back. */
+.projectlist.capped .project,
+.tabbar.capped .tab {
+  filter: grayscale(1);
+  opacity: 0.5;
+  transition: opacity 240ms ease, filter 240ms ease;
+}
+
+/* Whatever is under the pointer comes back most of the way, so reaching for a
+   row still feels like the sidebar is answering. */
+.projectlist.capped .project:hover,
+.tabbar.capped .tab:hover { opacity: 0.82; }
+
+/* The panel above the list: the one place that says in words what the grey and
+   the red mean, and how long they last. */
+.capped-banner {
+  flex: 0 0 auto;
+  padding: 9px 12px 10px;
+  border-bottom: 1px solid rgba(244, 103, 95, 0.3);
+  border-left: 2px solid var(--st-planning);
+  animation: capped-pulse 4s ease-in-out infinite;
+}
+
+.capped-banner[hidden] { display: none; }
+
+.capped-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.capped-dot {
+  flex: 0 0 7px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--st-planning);
+  animation: capped-dot-pulse 4s ease-in-out infinite;
+}
+
+/* On the sidebar's own heading rhythm, so the panel reads as part of the
+   sidebar rather than as an error card dropped into it. */
+.capped-title {
+  font-size: 10px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: #f09b95;
+}
+
+/* The number worth crossing the room to read. Tabular figures so it does not
+   twitch sideways as the seconds turn over. */
+.capped-clock {
+  margin-top: 5px;
+  color: #ffd7d3;
+  font-size: 23px;
+  font-weight: 600;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+}
+
+.capped-when {
+  color: var(--dim);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+/* The same thing in the tab strip, for when the sidebar is put away. */
+.capped-pill {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  border-left: 1px solid var(--line);
+  color: #ffd7d3;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  animation: capped-pulse 4s ease-in-out infinite;
+}
+
+.capped-pill[hidden] { display: none; }
+
+@keyframes capped-dot-pulse {
+  0%, 100% { opacity: 0.55; box-shadow: 0 0 0 0 rgba(244, 103, 95, 0); }
+  50%      { opacity: 1;    box-shadow: 0 0 0 4px rgba(244, 103, 95, 0.16); }
+}
+
+/* Still unmistakably red, just no longer moving. The countdown carries on
+   ticking either way — it is text, not motion, and it is the part being
+   waited on. */
 @media (prefers-reduced-motion: reduce) {
-  .projectlist.capped {
+  .projectlist.capped,
+  .capped-banner {
     animation: none;
     background-color: rgba(244, 103, 95, 0.07);
     box-shadow: inset 0 0 32px rgba(244, 103, 95, 0.16);
   }
+
+  /* Flat colour rather than the inset glow the other two get: at 32px tall the
+     glow has nowhere to fade out and reads as a solid red block. */
+  .capped-pill { animation: none; background-color: rgba(244, 103, 95, 0.14); }
+
+  .capped-dot { animation: none; opacity: 0.9; }
 }
 
 .project-row,
