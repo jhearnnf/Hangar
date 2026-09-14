@@ -37,6 +37,14 @@ const OAUTH_BETA = 'oauth-2025-04-20';
 // unlikely in the first place, and a usage bar has no reason to be livelier.
 const MIN_INTERVAL_MS = 120_000;
 
+// How often to ask again once a spent window's reset time has been and gone.
+// From that moment the cached figures describe a window that no longer exists —
+// the terminals are already working again — and every second the sidebar keeps
+// the banner up on their say-so is a second of claiming a limit that has lifted.
+// Still a floor rather than a free-for-all, since the endpoint may lag the reset
+// by a little and rate-limits the impatient.
+const RESET_RECHECK_MS = 15_000;
+
 // A poll nobody is waiting on should never be able to hang around forever.
 const TIMEOUT_MS = 10_000;
 
@@ -271,13 +279,33 @@ function createUsageReader(deps = {}) {
     return answer({ reason: res.reason });
   }
 
+  /**
+   * Whether the figures in hand are still worth serving without asking again.
+   *
+   * Ordinarily two minutes. But figures that say a window is spent, taken
+   * before the moment that window was due to reset, stop being an answer the
+   * instant that moment passes: they are the last word from a wait that is
+   * most likely over. Those go back to the endpoint on the shorter rhythm.
+   */
+  function fresh() {
+    if (!cached) return false;
+    const age = now() - cachedAt;
+    if (age >= MIN_INTERVAL_MS) return false;
+
+    const spent = cappedWindow(cached);
+    const resetsAt = spent && cached[spent].resetsAt;
+    if (resetsAt && resetsAt <= now()) return age < RESET_RECHECK_MS;
+    return true;
+  }
+
   return {
     /**
      * The current figures, polling at most once per MIN_INTERVAL_MS however
-     * often it is asked. Concurrent callers share the one request.
+     * often it is asked — or once per RESET_RECHECK_MS while a spent window is
+     * past due to reopen. Concurrent callers share the one request.
      */
     get() {
-      if (cached && now() - cachedAt < MIN_INTERVAL_MS) return Promise.resolve(answer());
+      if (fresh()) return Promise.resolve(answer());
       if (inflight) return inflight;
 
       inflight = poll().finally(() => { inflight = null; });
@@ -289,6 +317,7 @@ function createUsageReader(deps = {}) {
 module.exports = {
   USAGE_URL,
   MIN_INTERVAL_MS,
+  RESET_RECHECK_MS,
   KEYCHAIN_SERVICE,
   KEYCHAIN_RETRY_MS,
   credentialsPath,

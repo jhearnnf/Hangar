@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const {
   MIN_INTERVAL_MS,
+  RESET_RECHECK_MS,
   KEYCHAIN_SERVICE,
   KEYCHAIN_RETRY_MS,
   credentialsPath,
@@ -299,6 +300,38 @@ describe('createUsageReader', () => {
     const res = await reader.get();
     expect(res.stale).toBe(true);
     expect(res.capped).toBe('sevenDay');
+  });
+
+  it('asks again sooner once a spent window was due to reset', async () => {
+    // The two-minute hold is for figures still describing the present. Ones
+    // that say "spent until 20:10" stop doing that at 20:10, and a banner left
+    // up on them for another two minutes is claiming a limit that has lifted.
+    const calls = [];
+    const resetsAt = Date.parse(LIVE_BODY.five_hour.resets_at);
+    let clock = resetsAt - 5_000;
+    const spent = { ...LIVE_BODY, five_hour: { ...LIVE_BODY.five_hour, utilization: 100 } };
+    const reader = createUsageReader(base({
+      fetchFn: fakeFetch([{ body: spent }, { body: spent }, { body: LIVE_BODY }], calls),
+      now: () => clock,
+    }));
+
+    await reader.get();
+    clock = resetsAt - 1;
+    await reader.get();
+    expect(calls).toHaveLength(1);   // not due yet: the ordinary hold applies
+
+    clock = resetsAt + 1;
+    await reader.get();
+    expect(calls).toHaveLength(1);   // due, but only just asked
+
+    clock += RESET_RECHECK_MS;
+    const res = await reader.get();
+    expect(calls).toHaveLength(2);
+    expect(res.capped).toBe('fiveHour');   // the endpoint can lag the reset
+
+    clock += RESET_RECHECK_MS;
+    expect((await reader.get()).capped).toBeNull();
+    expect(calls).toHaveLength(3);
   });
 
   it('is unavailable, not broken, when there are no credentials', async () => {

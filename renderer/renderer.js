@@ -2146,8 +2146,10 @@ let cappedTimer = null;
 
 // Once the reset time has been and gone, the figures we are counting from are
 // the stale side of history: the window has almost certainly reopened and only
-// a fresh poll can say so. Asked for on this rhythm rather than every tick,
-// since the main process is holding its own answer for two minutes anyway.
+// a fresh poll can say so. Asked for on this rhythm rather than every tick.
+// The main process drops its own two-minute hold on the figures at the same
+// moment, for a slightly shorter one, so each of these asks actually reaches
+// the endpoint rather than the cache.
 const CAPPED_RECHECK_MS = 20_000;
 let recheckAt = 0;
 
