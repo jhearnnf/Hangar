@@ -164,6 +164,7 @@ function paintProject(projectPath) {
  */
 
 const projectMenu = $('projectmenu');
+const projectMenuNew = $('projectmenunew');
 const projectMenuHead = $('projectmenuhead');
 const projectMenuList = $('projectmenulist');
 const projectOpen = $('projectopen');
@@ -188,6 +189,7 @@ function closeProjectMenu() {
   menuProject = null;
   if (projectMenu.hidden) return;
   projectMenu.hidden = true;
+  projectMenuNew.textContent = '';
   projectMenuList.textContent = '';
 }
 
@@ -237,6 +239,42 @@ function menuRow(project, row) {
   return item;
 }
 
+/**
+ * One row for each agent in the table, and one for a shell with nothing in it.
+ *
+ * The double-click and the + button only ever open whichever agent Settings
+ * names, and swapping that to open the other one once is a trip through
+ * Settings and back. This is the menu's answer: every agent is listed here
+ * whatever the setting says, with the current one marked so the row that
+ * matches the double-click is not a surprise.
+ *
+ * @param {{path: string, name: string}} project
+ * @param {{label: string, command: string|null}} choice — an agent row, or
+ *   `{label: 'plain shell', command: null}` for the shell alone.
+ */
+function newRow(project, choice) {
+  const current = choice.command === agent.command;
+  const item = document.createElement('button');
+  item.type = 'button';
+  item.className = 'pmenu-item';
+  item.setAttribute('role', 'menuitem');
+  item.innerHTML = '<span class="pmenu-label"></span>'
+    + (current ? '<span class="pmenu-when">default</span>' : '');
+  item.querySelector('.pmenu-label').textContent = choice.command
+    ? `New ${choice.label} terminal`
+    : 'New plain shell';
+  item.title = `${project.path}\n\n`
+    + (choice.command
+      ? `Opens a terminal here and runs ${choice.command} in it.`
+      : 'Opens a terminal here and runs nothing in it.')
+    + (current ? '\nThe same as double-clicking the project.' : '');
+  item.addEventListener('click', () => {
+    closeProjectMenu();
+    newTerminal(project, choice.command);
+  });
+  return item;
+}
+
 /** Put the menu at the pointer, and inside the window wherever the pointer was. */
 function placeMenu(x, y) {
   const gap = 8;
@@ -266,6 +304,10 @@ async function openProjectMenu(project, x, y) {
   if (token !== menuToken) return;
 
   menuProject = project;
+  projectMenuNew.textContent = '';
+  for (const id of Agents.IDS) projectMenuNew.appendChild(newRow(project, Agents.get(id)));
+  projectMenuNew.appendChild(newRow(project, { label: 'plain shell', command: null }));
+
   projectMenuHead.textContent = `Recent ${agent.label} sessions — ${project.name}`;
   projectMenuList.textContent = '';
   paintOpenItem(project);
@@ -698,7 +740,7 @@ function renderProject(project, wrap) {
   const row = document.createElement('div');
   row.className = 'project-row';
   row.title = `${project.path}\nDouble-click for a ${agent.label} terminal (shift for a plain shell)` +
-    `\nRight-click to resume an earlier ${agent.label} session, open the folder, or rename or delete it` +
+    `\nRight-click for another agent, an earlier ${agent.label} session, the folder, or a rename or delete` +
     (mine.length ? '\nArrow expands' : '');
   row.innerHTML =
     '<span class="twisty"></span><span class="pname"></span>' +

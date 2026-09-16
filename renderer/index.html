@@ -107,6 +107,10 @@
      picked up again. Outside #app because it is positioned against the window
      and must not be clipped by the sidebar it springs from. -->
 <div id="projectmenu" class="pmenu" hidden role="menu" aria-label="Recent sessions">
+  <!-- One row per agent in agents.js, plus a plain shell, built per open. The
+       double-click only ever opens whichever agent Settings names; this is
+       where the other one is opened without going to Settings to swap. -->
+  <div id="projectmenunew" class="pmenu-new"></div>
   <div id="projectmenuhead" class="pmenu-head"></div>
   <div id="projectmenulist" class="pmenu-list"></div>
   <!-- Below the line, because everything above it opens a terminal and these
@@ -267,7 +271,8 @@
       <p class="setup-help">
         Whichever is picked, right-clicking a project lists that agent's own past sessions to
         resume, the sidebar names its terminals the same way, and the process view still
-        shows what it has running underneath.
+        shows what it has running underneath. The other agent is still a right-click away:
+        the same menu opens a new terminal for either.
       </p>
 
       <p id="setupagentnote" class="setup-note" hidden></p>

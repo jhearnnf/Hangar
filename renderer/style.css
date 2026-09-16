@@ -538,6 +538,15 @@ html, body {
 
 .pmenu[hidden] { display: none; }
 
+/* The ways of opening a fresh terminal here, above the sessions that would be
+   resumed. Ruled off from the head below it the same way the foot is ruled off
+   from the list above. */
+.pmenu-new {
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 4px;
+  padding-bottom: 4px;
+}
+
 .pmenu-head {
   padding: 5px 8px 6px;
   border-bottom: 1px solid var(--line);

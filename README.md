@@ -298,7 +298,9 @@ and `codex`, and switching between them is one radio button.
 What follows the setting is everything that had the word written into it:
 
 - **The terminal that opens**, on the PC and on the phone alike. Hold `shift` for a plain
-  shell as before.
+  shell as before. The setting is only what the double-click and the `+` mean: the
+  right-click menu offers a new terminal for every agent, and a plain shell, whatever
+  Settings says, so opening the other one once is not a trip through Settings and back.
 - **The resume menu.** Right-clicking a project lists that agent's own past sessions — see
   [Picking up where you left off](#picking-up-where-you-left-off).
 - **Everything that names it**: the hint at the foot of the sidebar, the project tooltips,
