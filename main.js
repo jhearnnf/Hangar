@@ -632,6 +632,17 @@ ipcMain.handle('config:get', () => ({
   env: envOverrides(),
 }));
 
+ipcMain.handle('config:agent', (_event, id) => {
+  if (!Agents.isAgentId(id)) return { ok: false, message: 'Unknown agent.' };
+  if (envOverrides().agent) return { ok: false, message: 'The agent is set by HANGAR_AGENT.' };
+  if (!saved) return { ok: false, message: 'Finish setting up Hangar first.' };
+  try {
+    return { ok: true, config: saveConfig({ ...saved, agent: id }) };
+  } catch (err) {
+    return { ok: false, message: `Could not save agent: ${err.message}` };
+  }
+});
+
 ipcMain.handle('config:save', (_event, input) => {
   const check = validateConfig(input);
   if (!check.ok) return { ok: false, field: check.field, message: check.message };
@@ -680,6 +691,10 @@ function currentUsage() {
 }
 
 ipcMain.handle('usage:get', () => currentUsage());
+ipcMain.handle('usage:agent', (_event, id) => {
+  if (!Agents.isAgentId(id)) return { available: false };
+  return id === 'codex' ? codexUsage.get() : usage.get();
+});
 
 // Every project, not only the ones worked on in this session: the point of the
 // backup is that the whole projects folder survives the machine, and plenty of

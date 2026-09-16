@@ -23,6 +23,16 @@ const diskOf = (...present) => ({
   exists: (p) => present.map((x) => path.resolve(x)).includes(path.resolve(p)),
 });
 
+describe('resource display preference', () => {
+  it('defaults existing installations to visible and preserves an explicit off setting', () => {
+    expect(resolveConfig({ projectsRoot: PROJECTS }, { env: {} }).showResources).toBe(true);
+    const result = validateConfig({ projectsRoot: PROJECTS, showResources: false }, diskOf(PROJECTS));
+    expect(result.ok).toBe(true);
+    const saved = parseConfig(JSON.stringify(result.config));
+    expect(resolveConfig(saved, { env: {} }).showResources).toBe(false);
+  });
+});
+
 describe('detectDropbox', () => {
   it('finds the ordinary Dropbox folder', () => {
     const dir = path.join(HOME, 'Dropbox');

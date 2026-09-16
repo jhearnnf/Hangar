@@ -43,6 +43,7 @@ const DEFAULTS = {
   // outside this window and there is no answer that does nothing, so it starts
   // on the one most people here are running rather than on nobody.
   agent: DEFAULT_AGENT,
+  showResources: true,
 };
 
 /**
@@ -111,6 +112,7 @@ function parseConfig(raw) {
   // program the + button runs, and the only names it is allowed to name are
   // ones Hangar ships a row for.
   if (isAgentId(saved.agent)) out.agent = saved.agent;
+  if (typeof saved.showResources === 'boolean') out.showResources = saved.showResources;
 
   // The projects root is the one answer the setup screen always writes, so a
   // file without a usable one was not written by it — an empty object, or a
@@ -151,6 +153,7 @@ function resolveConfig(saved, { env = process.env, defaults = DEFAULTS } = {}) {
 
   return {
     projectsRoot,
+    showResources: typeof from.showResources === 'boolean' ? from.showResources : defaults.showResources,
     // A backup with nowhere to go is off however it was asked for.
     backupEnabled: Boolean(backupEnabled && backupRoot),
     backupRoot,
@@ -231,6 +234,7 @@ function validateConfig(input, deps = {}) {
   }
 
   const extras = {
+    showResources: typeof given.showResources === 'boolean' ? given.showResources : DEFAULTS.showResources,
     remoteEnabled: Boolean(given.remoteEnabled),
     remotePort: port,
     autoStart: Boolean(given.autoStart),

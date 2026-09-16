@@ -108,6 +108,7 @@ html, body {
 }
 
 .spark:hover { background: #10131a; }
+.spark[hidden] { display: none; }
 .spark:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 
 .spark-canvas {
@@ -1338,6 +1339,20 @@ button.proc-row:hover { background: #1a1e26; }
 }
 
 .side-settings:hover { color: var(--dim); }
+
+.side-controls { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; }
+.side-controls .side-settings { margin-top: 0; }
+.agent-picker { display: flex; align-items: center; gap: 6px; }
+.agent-name { color: var(--dim); font-size: 11px; font-weight: 600; }
+.agent-name[data-usage="good"] { color: #63d88b; }
+.agent-name[data-usage="low"] { color: #f5a64a; }
+.agent-name[data-usage="empty"] { color: #f16b74; }
+.agent-toggle { width: 30px; height: 18px; padding: 2px; border: 1px solid var(--dim); border-radius: 10px; background: var(--bg); cursor: pointer; flex-shrink: 0; }
+.agent-toggle span { display: block; width: 12px; height: 12px; border-radius: 50%; background: var(--dim); transition: transform 120ms; }
+.agent-toggle[aria-checked="true"] span { transform: translateX(12px); }
+.agent-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.agent-toggle:disabled { cursor: default; opacity: .5; }
+#agenterror { color: #f16b74; margin-top: 6px; }
 
 /* The tab strip has no room for a word, and it is the only chrome on screen
    when the sidebar is hidden — so settings keeps a way in there, as a cog. */

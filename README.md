@@ -747,6 +747,12 @@ Hangar reads Codex's own figures instead.
 
 ## Codex usage bars
 
+The switch beside **Settings** selects Claude or Codex for new terminals. Both names
+stay visible and show the remaining allowance in their most depleted usage window:
+green above 25%, orange at 25% or less, and red at zero. Grey means usage is unavailable;
+hover a name for its remaining percentage and whether the reading is stale. Both
+providers are checked so you can compare them before switching.
+
 With Codex selected in Settings, the same 5h and 7d bars show Codex subscription
 usage and reset countdowns. Hangar starts a short-lived `codex app-server` helper
 and calls the documented `account/rateLimits/read` method. Codex handles authentication;
@@ -763,6 +769,10 @@ For a CLI outside PATH, set `HANGAR_CODEX_BIN` to the executable path. Windows s
 the native executable installed by the Codex npm package as well as `codex.exe` on PATH.
 
 ## What the terminals are running
+
+Turn off **Settings → Projects → Show CPU and RAM displays** to hide the sidebar
+resource graph and pause its polling. The preference is saved and applies immediately.
+The detailed process panel remains available with **Ctrl+Shift+P**.
 
 Above the usage bars is a live line of CPU and memory for the whole machine, and clicking
 it — or `Ctrl+Shift+P` — opens what is behind the number: every process each terminal has

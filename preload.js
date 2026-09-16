@@ -35,10 +35,12 @@ contextBridge.exposeInMainWorld('hangar', {
 
   getConfig: () => ipcRenderer.invoke('config:get'),
   saveConfig: (config) => ipcRenderer.invoke('config:save', config),
+  setAgent: (id) => ipcRenderer.invoke('config:agent', id),
   pickFolder: (title, defaultPath) => ipcRenderer.invoke('config:pick', { title, defaultPath }),
   reveal: (target) => ipcRenderer.invoke('config:reveal', { target }),
 
   usage: () => ipcRenderer.invoke('usage:get'),
+  agentUsage: (id) => ipcRenderer.invoke('usage:agent', id),
 
   // What the machine is doing, and what the terminals have running underneath
   // them. The cheap half is polled; the expensive half is only measured between

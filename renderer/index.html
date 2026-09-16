@@ -58,7 +58,15 @@
     <div class="side-foot">
       <span class="key">+</span> or double-click opens <span id="footagent">claude</span> &middot;
       hold <span class="key">shift</span> for a shell
-      <button id="opensettings" class="side-settings" title="Settings">Settings</button>
+      <div class="side-controls">
+        <button id="opensettings" class="side-settings" title="Settings">Settings</button>
+        <div class="agent-picker">
+          <span id="agentclaude" class="agent-name">Claude</span>
+          <button id="agenttoggle" class="agent-toggle" role="switch" aria-checked="false" aria-label="Use Codex instead of Claude" disabled><span></span></button>
+          <span id="agentcodex" class="agent-name">Codex</span>
+        </div>
+      </div>
+      <div id="agenterror" role="status" hidden></div>
     </div>
   </aside>
 
@@ -245,6 +253,10 @@
         <button id="setupprojectsbrowse" class="modal-btn">Browse…</button>
       </div>
       <div id="setupprojectserror" class="modal-error"></div>
+      <label class="setup-check">
+        <input id="setupresources" type="checkbox" checked />
+        <span>Show CPU and RAM displays</span>
+      </label>
     </div>
 
     <!-- Agent ---------------------------------------------------------- -->

@@ -40,6 +40,7 @@ let agent = Agents.get(Agents.DEFAULT);
 
 function setAgent(id) {
   agent = Agents.get(id);
+  $('agenttoggle').setAttribute('aria-checked', String(agent.id === 'codex'));
   $('footagent').textContent = agent.label;
   $('procsagent').textContent = agent.label;
   $('projectmenu').setAttribute('aria-label', `Recent ${agent.label} sessions`);
@@ -2296,6 +2297,7 @@ function setCapped(which, resetsAt) {
 }
 
 async function refreshUsage() {
+  for (const id of ['claude', 'codex']) refreshAgentUsage(id);
   const requestedAgent = agent.id;
   let usage;
   try {
@@ -2343,6 +2345,29 @@ async function refreshUsage() {
 }
 
 // ----------------------------------------------------------------- resources
+
+async function refreshAgentUsage(id) {
+  const name = $(`agent${id}`);
+  try {
+    const value = await api.agentUsage(id);
+    const windows = value?.available
+      ? [value.fiveHour, value.sevenDay].filter(w => w && Number.isFinite(w.used)) : [];
+    if (!windows.length) throw new Error('Usage unavailable');
+    const remaining = Math.max(0, 100 - Math.max(...windows.map(w => w.used)));
+    name.dataset.usage = remaining === 0 ? 'empty' : remaining <= 25 ? 'low' : 'good';
+    name.title = `${remaining}% remaining in the most depleted window${value.stale ? ' (last known usage)' : ''}`;
+  } catch {
+    name.dataset.usage = 'unknown';
+    name.title = 'Usage unavailable';
+  }
+}
+
+let showResources = true;
+function applyResourceSetting(config) {
+  showResources = config.showResources !== false;
+  $('spark').hidden = !showResources;
+  if (showResources) tickSpark();
+}
 
 /**
  * The line above the usage bars, and the panel behind it.
@@ -2437,6 +2462,7 @@ function drawSpark() {
 }
 
 async function tickSpark() {
+  if (!showResources) return;
   let stats;
   try {
     stats = await api.system();
@@ -2462,7 +2488,7 @@ window.addEventListener('resize', drawSpark);
  */
 async function startSpark() {
   try {
-    await api.system();
+    if (showResources) await api.system();
   } catch { /* the interval below will try again */ }
   setInterval(tickSpark, SPARK_TICK_MS);
 }
@@ -3066,6 +3092,7 @@ async function openSetup(state) {
   setupRemote.checked = Boolean(config.remoteEnabled);
   setupRemotePort.value = String(config.remotePort || 7433);
   setupAutoStart.checked = Boolean(config.autoStart);
+  $('setupresources').checked = config.showResources !== false;
   setupMinimised.checked = Boolean(config.startMinimised);
   paintRemoteBox();
 
@@ -3153,6 +3180,7 @@ async function submitSetup() {
       autoStart: setupAutoStart.checked,
       startMinimised: setupMinimised.checked,
       agent: chosenAgent(),
+      showResources: $('setupresources').checked,
     });
   } catch (err) {
     result = { ok: false, field: null, message: err.message };
@@ -3169,6 +3197,7 @@ async function submitSetup() {
   }
 
   configured = true;
+  $('agenttoggle').disabled = Boolean(envLocked.agent);
   const wantedPhone = result.config.remoteEnabled;
   await applySettings(result.config);
 
@@ -3192,6 +3221,7 @@ async function submitSetup() {
  */
 async function applySettings(config) {
   backupsOn = config.backupEnabled;
+  applyResourceSetting(config);
   const previousAgent = agent.id;
   // Before the sidebar is rebuilt below, since every project row's tooltip and
   // + button is named after this.
@@ -3223,6 +3253,22 @@ $('setupbackupbrowse').addEventListener('click', () => browseFor(setupBackupRoot
 $('opensettings').addEventListener('click', () => openSetup());
 $('opensettings2').addEventListener('click', () => openSetup());
 
+$('agenttoggle').addEventListener('click', async () => {
+  const toggle = $('agenttoggle');
+  toggle.disabled = true;
+  $('agenterror').hidden = true;
+  try {
+    const result = await api.setAgent(agent.id === 'claude' ? 'codex' : 'claude');
+    if (!result.ok) throw new Error(result.message);
+    await applySettings(result.config);
+  } catch (err) {
+    $('agenterror').textContent = err.message;
+    $('agenterror').hidden = false;
+  } finally {
+    toggle.disabled = false;
+  }
+});
+
 // Same rule as the new-project modal: a click on the backdrop dismisses, but
 // only once it has been answered at least once.
 setup.addEventListener('mousedown', (e) => {
@@ -3237,6 +3283,9 @@ setup.addEventListener('mousedown', (e) => {
 
   const state = await api.getConfig();
   backupsOn = state.config.backupEnabled;
+  applyResourceSetting(state.config);
+  $('agenttoggle').disabled = !state.configured || state.env.agent;
+  $('agenttoggle').title = state.env.agent ? 'Agent set by HANGAR_AGENT' : 'Switch agent for new terminals';
   setAgent(state.config.agent);
 
   // Nothing has been answered yet, so there is no projects root to list and no
