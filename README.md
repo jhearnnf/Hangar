@@ -105,8 +105,9 @@ context, like the things you would scan a download for. They are listed here so 
 check each one against the code rather than take it on trust. Every path below is one
 file; none of it is minified or bundled.
 
-**Network.** One outbound URL in the entire app: `https://api.anthropic.com/api/oauth/usage`,
-in `usage.js`, for the usage bars. No telemetry, no update check, no analytics.
+**Network.** Claude usage bars call `https://api.anthropic.com/api/oauth/usage`
+in `usage.js`. Codex usage bars ask the local Codex app server, which contacts OpenAI
+using its existing login. Hangar adds no telemetry, update check, or analytics.
 
 Inbound is the other half, and it is off until you turn it on. With **Settings → Phone**
 ticked, Hangar listens on port 7433 of your local network so the Android app can reach it
@@ -312,9 +313,8 @@ What does not:
   running ones are. A `claude` tab under a Codex setting keeps working, and the process
   view keeps stepping over both — `agents.js` hands it every agent's process names rather
   than the chosen one's, so neither is ever mistaken for a job its own tab started.
-- **The usage bars**, which only exist for Claude Code — see
-  [Claude usage bars](#claude-usage-bars). Under Codex the block simply is not there, and
-  the endpoint is not asked.
+- **The usage bars** follow the selected agent, with separate caches for Claude Code
+  and Codex. See [Claude usage bars](#claude-usage-bars) and [Codex usage bars](#codex-usage-bars).
 - **The colours in the sidebar.** The tool-call patterns in `classify.js` are Claude Code's
   shape and are left alone rather than guessed at for another agent: a pattern that matches
   nothing costs a regex and colours nothing, whereas a wrong guess would colour terminals
@@ -742,10 +742,25 @@ release is allowed to break this feature; it is not allowed to break Hangar. The
 also absent for anyone not signed in with a subscription — API-key, Bedrock and Vertex
 setups have no credentials file to read.
 
-Being part of the sidebar, they hide with it on `Ctrl+Shift+E` — and they are not there at
-all under another agent, since these are Claude Code's own numbers and there is nothing
-equivalent to read. With Codex selected the endpoint is not asked rather than asked and
-ignored: the token is not ours to spend on a question nobody is looking at.
+Being part of the sidebar, they hide with it on `Ctrl+Shift+E`. With Codex selected,
+Hangar reads Codex's own figures instead.
+
+## Codex usage bars
+
+With Codex selected in Settings, the same 5h and 7d bars show Codex subscription
+usage and reset countdowns. Hangar starts a short-lived `codex app-server` helper
+and calls the documented `account/rateLimits/read` method. Codex handles authentication;
+Hangar receives percentages and reset times without reading its tokens.
+
+Requests are cached for two minutes, including failed requests. A spent window is
+rechecked more frequently after its reset time. Failed polls keep the last successful
+figures with an `as of` note. Without a supported signed-in account or an installed
+Codex CLI, the bars remain hidden. Only 300-minute and 10,080-minute windows are shown,
+so other quota durations cannot be mistaken for five-hour or weekly limits.
+
+`CODEX_HOME` and `HANGAR_CODEX_HOME` select the Codex configuration directory.
+For a CLI outside PATH, set `HANGAR_CODEX_BIN` to the executable path. Windows supports
+the native executable installed by the Codex npm package as well as `codex.exe` on PATH.
 
 ## What the terminals are running
 

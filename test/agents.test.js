@@ -68,8 +68,8 @@ describe('the table itself', () => {
     }
   });
 
-  it('reads the usage bars for claude alone, since they are its own numbers', () => {
+  it('supports provider-specific usage bars for both agents', () => {
     expect(Agents.get('claude').usage).toBe(true);
-    expect(Agents.get('codex').usage).toBe(false);
+    expect(Agents.get('codex').usage).toBe(true);
   });
 });

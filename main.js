@@ -15,6 +15,7 @@ const { checkProjectRename } = require('./project-rename');
 const { parseState, restoreState, MIN_SIZE } = require('./window-state');
 const { mirror, sweepDetached } = require('./backup');
 const { createUsageReader } = require('./usage');
+const { createCodexUsageReader } = require('./codex-usage');
 const { createMonitor, createSystemReader } = require('./processes');
 const { createSessions } = require('./sessions');
 const { recentFor } = require('./transcripts');
@@ -665,6 +666,7 @@ ipcMain.handle('config:reveal', (_event, { target }) => {
 // Code credentials file. The renderer is handed two percentages and a reset
 // time; the token never leaves this process.
 const usage = createUsageReader();
+const codexUsage = createCodexUsageReader();
 
 /** The chosen agent, in the shape the phone draws and runs with. */
 function agentSummary() {
@@ -672,18 +674,9 @@ function agentSummary() {
   return { id, label, command };
 }
 
-/**
- * The bars, or nothing at all.
- *
- * They are Claude Code's own numbers off Anthropic's endpoint, and there is no
- * equivalent to read for another agent. So with one of those selected the
- * endpoint is not asked — not asked rather than asked and ignored, since the
- * token it would be asked with is not ours to spend on a question nobody is
- * looking at — and the sidebar hides the bars exactly as it does on a machine
- * where Claude Code has never been signed in.
- */
+/** Read only the selected agent's usage, keeping each provider's cache separate. */
 function currentUsage() {
-  return Agents.get(config && config.agent).usage ? usage.get() : { available: false };
+  return Agents.get(config && config.agent).id === 'codex' ? codexUsage.get() : usage.get();
 }
 
 ipcMain.handle('usage:get', () => currentUsage());

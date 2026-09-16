@@ -35,9 +35,7 @@
       // Never a job of its own in the process view: this is what a terminal is,
       // not something it went on to run.
       processNames: ['claude', 'claude.exe'],
-      // Whether the sidebar's 5h and 7d bars mean anything. They are Claude
-      // Code's own numbers off Anthropic's endpoint, and there is nothing
-      // equivalent to read for anyone else.
+      // Whether the sidebar can read this agent's 5h and 7d usage windows.
       usage: true,
       // Where the sessions this menu cannot offer are still to be found.
       ownPicker: 'claude’s own /resume',
@@ -50,7 +48,7 @@
       label: 'codex',
       command: 'codex',
       processNames: ['codex', 'codex.exe'],
-      usage: false,
+      usage: true,
       ownPicker: '`codex resume` in a terminal',
       resume: (id) => `codex resume ${id}`,
     },

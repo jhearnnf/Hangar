@@ -2296,6 +2296,7 @@ function setCapped(which, resetsAt) {
 }
 
 async function refreshUsage() {
+  const requestedAgent = agent.id;
   let usage;
   try {
     usage = await api.usage();
@@ -2303,6 +2304,7 @@ async function refreshUsage() {
     return; // leave whatever is drawn; the next tick can try again
   }
 
+  if (requestedAgent !== agent.id) return;
   // No credentials, or a response we could not read. Nothing to say, so the
   // sidebar goes back to ending on the hint line.
   usageBox.hidden = !usage || !usage.available;
@@ -3190,11 +3192,15 @@ async function submitSetup() {
  */
 async function applySettings(config) {
   backupsOn = config.backupEnabled;
+  const previousAgent = agent.id;
   // Before the sidebar is rebuilt below, since every project row's tooltip and
   // + button is named after this.
   setAgent(config.agent);
-  // The bars belong to one agent and not the other, so they go or come back on
-  // Save rather than at the next poll.
+  // Clear the previous provider while the newly selected one is being read.
+  if (previousAgent !== agent.id) {
+    usageBox.hidden = true;
+    setCapped(null, null);
+  }
   refreshUsage();
 
   const { projects: found, root, ignored } = await api.listProjects();
