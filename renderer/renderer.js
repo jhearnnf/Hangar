@@ -2134,12 +2134,19 @@ const CAPPED_TITLES = { fiveHour: '5-hour limit reached', sevenDay: 'Weekly limi
 // from the cache over there and never touch the network.
 const USAGE_TICK_MS = 60_000;
 
-/** A duration as the sidebar says it: "2h 14m", "47m", or nothing at all. */
+/** A duration as the sidebar says it: "3d 4h", "2h 14m", "47m", or nothing at all. */
 function formatIn(ms) {
   if (!Number.isFinite(ms) || ms <= 0) return null;
 
   const mins = Math.ceil(ms / 60_000);
   if (mins < 60) return `${mins}m`;
+
+  // The weekly window is days out for most of its life, and "118h" is a sum.
+  if (mins >= 24 * 60) {
+    const days = Math.floor(mins / (24 * 60));
+    const hrs = Math.floor((mins % (24 * 60)) / 60);
+    return hrs ? `${days}d ${hrs}h` : `${days}d`;
+  }
 
   const hours = Math.floor(mins / 60);
   const rest = mins % 60;
@@ -2329,8 +2336,12 @@ async function refreshUsage() {
   // saying all of this in a size worth reading, and repeating it down here in
   // 9px grey would only be somewhere else to have to look.
   if (!spent) {
-    const resets = usage.fiveHour && formatIn(usage.fiveHour.resetsAt - Date.now());
-    if (resets) parts.push(`resets in ${resets}`);
+    const resets = [];
+    for (const key of ['fiveHour', 'sevenDay']) {
+      const left = usage[key] && formatIn(usage[key].resetsAt - Date.now());
+      if (left) resets.push(`${USAGE_LABELS[key]} ${left}`);
+    }
+    if (resets.length) parts.push(`resets in ${resets.join(', ')}`);
   }
 
   // Only mentioned once the figures are actually old — during a rate-limit or
@@ -3268,6 +3279,8 @@ $('agenttoggle').addEventListener('click', async () => {
     toggle.disabled = false;
   }
 });
+
+api.onConfigChanged((config) => applySettings(config));
 
 // Same rule as the new-project modal: a click on the backdrop dismisses, but
 // only once it has been answered at least once.

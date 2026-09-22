@@ -69,8 +69,22 @@ let pcName = '';
 // Which agent the PC opens for you, sent with the welcome and again whenever
 // its Settings change. Only ever what the PC last said: this is one setting for
 // the machine, and a phone with an opinion of its own about it would be a way
-// to start the wrong one from across the room.
+// to start the wrong one from across the room. The pill in the header asks the
+// PC to change it, and this follows once the PC says it has.
 let agent = { id: 'claude', label: 'claude', command: 'claude' };
+// What the pill can switch to, and why it cannot, when it cannot.
+let agents = [];
+let agentLocked = null;
+
+function takeAgentInfo(message) {
+  if (message.agent) agent = message.agent;
+  if (Array.isArray(message.agents)) agents = message.agents;
+  if ('agentLocked' in message) agentLocked = message.agentLocked;
+  $('agentpick').textContent = agent.label;
+  // A PC from before phones could switch sends no list; the pill still names
+  // the agent but offers nothing it cannot do.
+  $('agentpick').disabled = agents.length < 2;
+}
 
 // Whether this phone has ever got as far as a welcome from this PC. It decides
 // whether a dropped connection is a note in the header or a trip back to the
@@ -146,7 +160,7 @@ function onState(state) {
 
 function onWelcome(message) {
   pcName = message.name || 'the PC';
-  if (message.agent) agent = message.agent;
+  takeAgentInfo(message);
   everConnected = true;
   store.set('host', host);
   store.set('port', port);
@@ -571,9 +585,26 @@ function onRecent(message) {
  * the new name on the buttons.
  */
 function onInfo(message) {
-  if (message.agent) agent = message.agent;
+  const before = agent.id;
+  takeAgentInfo(message);
   paintProjects();
+  // The bars are the agent's, so a switch makes the ones on screen wrong.
+  if (agent.id !== before) {
+    $('usage').hidden = true;
+    client.send({ t: 'usage' });
+  }
 }
+
+$('agentpick').addEventListener('click', () => {
+  if (agentLocked) {
+    toast(agentLocked);
+    return;
+  }
+  sheet('New terminals open', agents.map((option) => ({
+    label: option.id === agent.id ? `${option.name} ✓` : option.name,
+    run: option.id === agent.id ? null : () => client.send({ t: 'agent', id: option.id }),
+  })));
+});
 
 function newTerminal(project, command) {
   const size = claimSize ? phoneSize() : { cols: 100, rows: 30 };
@@ -1187,7 +1218,7 @@ $('termmenu').addEventListener('click', () => {
       run: () => {
         claimSize = !claimSize;
         store.set('claimSize', claimSize);
-        if (!claimSize) client.send({ t: 'release', id: openId, cols: 120, rows: 30 });
+        if (!claimSize) client.send({ t: 'release', id: openId });
         fitTerminal({ force: true });
       },
     },
@@ -1315,14 +1346,20 @@ if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App
   // Coming back from the lock screen is exactly when the socket has quietly
   // died and nothing has noticed yet.
   App.addListener('appStateChange', ({ isActive }) => {
-    if (!isActive) return;
+    if (!isActive) { releaseWidth(); return; }
     client.wake();
     if (openId) fitTerminal({ force: true });
   });
 }
 
+// A phone in a pocket is not reading anything, so the PC gets its width back
+// until this one is picked up again, when the fit below claims it afresh.
+function releaseWidth() {
+  if (openId && claimSize) client.send({ t: 'release', id: openId });
+}
+
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) return;
+  if (document.hidden) { releaseWidth(); return; }
   client.wake();
   // Picking the phone back up is the moment to fit — and to take the width
   // back, which the reconnect behind this deliberately no longer does on its

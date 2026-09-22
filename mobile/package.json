@@ -5,7 +5,7 @@
   "description": "Hangar on a phone — a Capacitor shell around the mobile web client in www/.",
   "scripts": {
     "sync": "node tools/sync-www.js && cap sync android",
-    "android": "node tools/sync-www.js && cap sync android && cd android && gradlew.bat assembleDebug",
+    "android": "node tools/sync-www.js && cap sync android && cd android && .\\gradlew.bat assembleDebug",
     "run": "node tools/sync-www.js && cap run android",
     "icon": "electron tools/make-icon.js"
   },

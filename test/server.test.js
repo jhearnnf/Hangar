@@ -78,8 +78,10 @@ describe('the server a phone talks to', () => {
   let server;
   let port;
   let phones;
+  let agentId;
 
   beforeEach(async () => {
+    agentId = 'claude';
     pty = fakePty();
     sessions = createSessions({
       spawn: () => ({ proc: pty, shell: 'pwsh.exe', cwd: 'C:\\work\\demo', args: [] }),
@@ -97,7 +99,13 @@ describe('the server a phone talks to', () => {
       recentSessions: (projectPath) => (projectPath === 'C:\\work\\demo'
         ? [{ id: 'f1e2d3c4-0000-4000-8000-000000000001', label: 'add a sidebar', at: 1000, live: false, command: 'claude --resume f1e2d3c4-0000-4000-8000-000000000001' }]
         : []),
-      info: () => ({ app: 'Hangar', name: 'TEST-PC' }),
+      setAgent: (id) => {
+        if (id !== 'codex') return { ok: false, message: 'Unknown agent.' };
+        agentId = id;
+        server.broadcastInfo();
+        return { ok: true };
+      },
+      info: () => ({ app: 'Hangar', name: 'TEST-PC', agent: { id: agentId } }),
     });
 
     ({ port } = await server.start(0));
@@ -186,6 +194,24 @@ describe('the server a phone talks to', () => {
     await p.next('welcome');
     return p;
   }
+
+  it('switches the agent for a phone and tells every phone', async () => {
+    const p = await paired();
+    const other = await paired();
+    p.send({ t: 'agent', id: 'codex' });
+
+    expect((await p.next('info')).agent.id).toBe('codex');
+    expect((await other.next('info')).agent.id).toBe('codex');
+  });
+
+  it('says why an agent switch was refused', async () => {
+    const p = await paired();
+    p.send({ t: 'agent', ref: 7, id: 'nope' });
+
+    const error = await p.next('error');
+    expect(error.ref).toBe(7);
+    expect(error.message).toBe('Unknown agent.');
+  });
 
   it('opens a terminal for a phone and attaches it', async () => {
     const p = await paired();
@@ -317,6 +343,34 @@ describe('the server a phone talks to', () => {
     await new Promise((r) => setTimeout(r, 100));
 
     expect(sessions.get(session.id).sizeOwner).toBe('desktop');
+  });
+
+  it('hands the width back when the phone leaves the terminal or is put down', async () => {
+    const p = await paired();
+    p.send({ t: 'create', ref: 1, projectPath: 'C:\\work\\demo', projectName: 'demo', claim: true, cols: 45, rows: 30 });
+    const { session } = await p.next('created');
+
+    p.send({ t: 'release', id: session.id });
+    await p.next('session', (m) => m.session.sizeOwner === 'desktop');
+
+    p.send({ t: 'resize', id: session.id, claim: true, cols: 45, rows: 30 });
+    await p.next('session', (m) => m.session.sizeOwner !== 'desktop');
+
+    p.send({ t: 'detach', id: session.id });
+    await p.next('session', (m) => m.session.sizeOwner === 'desktop');
+  });
+
+  it("leaves another phone's width alone when this one lets go", async () => {
+    const holder = await paired();
+    const other = await paired();
+    holder.send({ t: 'create', ref: 1, projectPath: 'C:\\work\\demo', projectName: 'demo', claim: true, cols: 45, rows: 30 });
+    const { session } = await holder.next('created');
+
+    other.send({ t: 'release', id: session.id });
+    other.send({ t: 'detach', id: session.id });
+    await new Promise((r) => setTimeout(r, 100));
+
+    expect(sessions.get(session.id).sizeOwner).not.toBe('desktop');
   });
 
   it('answers a health check without a socket, for anyone wondering if it is up', async () => {

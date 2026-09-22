@@ -36,6 +36,8 @@ contextBridge.exposeInMainWorld('hangar', {
   getConfig: () => ipcRenderer.invoke('config:get'),
   saveConfig: (config) => ipcRenderer.invoke('config:save', config),
   setAgent: (id) => ipcRenderer.invoke('config:agent', id),
+  // Settings saved from somewhere other than this window — a phone switching agent.
+  onConfigChanged: (cb) => ipcRenderer.on('config:changed', (_e, config) => cb(config)),
   pickFolder: (title, defaultPath) => ipcRenderer.invoke('config:pick', { title, defaultPath }),
   reveal: (target) => ipcRenderer.invoke('config:reveal', { target }),
 

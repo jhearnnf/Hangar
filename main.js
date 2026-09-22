@@ -632,16 +632,26 @@ ipcMain.handle('config:get', () => ({
   env: envOverrides(),
 }));
 
-ipcMain.handle('config:agent', (_event, id) => {
+/** Why the agent cannot be switched right now, or null if it can. */
+function agentLocked() {
+  if (envOverrides().agent) return 'The agent is set by HANGAR_AGENT.';
+  if (!saved) return 'Finish setting up Hangar first.';
+  return null;
+}
+
+/** Switch the agent, from the window's toggle or from a phone. */
+function changeAgent(id) {
   if (!Agents.isAgentId(id)) return { ok: false, message: 'Unknown agent.' };
-  if (envOverrides().agent) return { ok: false, message: 'The agent is set by HANGAR_AGENT.' };
-  if (!saved) return { ok: false, message: 'Finish setting up Hangar first.' };
+  const locked = agentLocked();
+  if (locked) return { ok: false, message: locked };
   try {
     return { ok: true, config: saveConfig({ ...saved, agent: id }) };
   } catch (err) {
     return { ok: false, message: `Could not save agent: ${err.message}` };
   }
-});
+}
+
+ipcMain.handle('config:agent', (_event, id) => changeAgent(id));
 
 ipcMain.handle('config:save', (_event, input) => {
   const check = validateConfig(input);
@@ -963,6 +973,13 @@ const server = createServer({
   },
   usage: () => currentUsage(),
   recentSessions,
+  // The window hears about its own toggle from the reply; a phone's switch
+  // has to be sent to it, or its toggle and sidebar go on naming the old one.
+  setAgent: (id) => {
+    const result = changeAgent(id);
+    if (result.ok) toWindow('config:changed', result.config);
+    return result;
+  },
   backup: (projectPath) => (
     config.backupEnabled
       ? mirror(projectPath, { root: config.backupRoot })
@@ -980,6 +997,9 @@ const server = createServer({
     // not, so an id would only be something for it to look up in a second copy
     // of the table.
     agent: agentSummary(),
+    // Everything the phone's switcher offers, and why it cannot, if it cannot.
+    agents: Agents.IDS.map((id) => ({ id, name: Agents.get(id).name })),
+    agentLocked: agentLocked(),
   }),
   // Handy rather than necessary: pointing a phone browser at the same port is
   // the fastest way to find out whether the PC half of this is working, and it

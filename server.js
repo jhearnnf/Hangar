@@ -74,6 +74,9 @@ function createServer(deps) {
     // comes from — and so a server built without one simply has nothing to
     // offer instead of failing to start.
     recentSessions = () => [],
+    // Switching which agent the + opens, from the phone. The same save the
+    // window's toggle makes, which broadcasts the new `info` to every phone.
+    setAgent = () => ({ ok: false, message: 'This PC cannot switch agents from here.' }),
     info = () => ({}),
     wwwDir = null,
     log = () => {},
@@ -228,7 +231,11 @@ function createServer(deps) {
         attach(client, message.id, message.seq);
         return;
 
+      // A phone that has stopped looking at a terminal has no use for its
+      // width either, and leaving the PC phone-shaped until someone clicked
+      // into it there read as the phone having broken the window.
       case 'detach':
+        giveBack(client, message.id);
         client.attached.delete(message.id);
         return;
 
@@ -242,8 +249,9 @@ function createServer(deps) {
         return;
 
       case 'release':
-        // Hand the width back to the desktop window.
-        sessions.claimSize(message.id, 'desktop', message.cols, message.rows);
+        // Hand the width back to the desktop window — the reflow setting
+        // turned off, or the phone put down with the terminal still open.
+        giveBack(client, message.id);
         return;
 
       case 'kill':
@@ -269,9 +277,27 @@ function createServer(deps) {
         return;
       }
 
+      // Only the failure is answered here. Success reaches every phone,
+      // this one included, as the `info` the save broadcasts.
+      case 'agent': {
+        const result = await setAgent(message.id);
+        if (!result.ok) send(client, { t: 'error', ref: message.ref, message: result.message });
+        return;
+      }
+
       default:
         send(client, { t: 'error', message: `Hangar does not understand "${message.t}".` });
     }
+  }
+
+  /**
+   * Return a terminal's width to the window, if this phone is the one holding
+   * it. Only then: another phone reading the same terminal keeps its claim.
+   * The size handed over is the phone's; the window answers with its own.
+   */
+  function giveBack(client, id) {
+    const session = sessions.get(id);
+    if (session && session.sizeOwner === client.id) sessions.claimSize(id, 'desktop', session.cols, session.rows);
   }
 
   function attach(client, id, sinceSeq) {
@@ -404,10 +430,7 @@ function createServer(deps) {
       clients.delete(client);
       // Anything this phone had taken the width of goes back to the window,
       // which is the only viewer that is definitely still there.
-      for (const id of client.attached.keys()) {
-        const session = sessions.get(id);
-        if (session && session.sizeOwner === client.id) sessions.claimSize(id, 'desktop', session.cols, session.rows);
-      }
+      for (const id of client.attached.keys()) giveBack(client, id);
       if (client.device) {
         devices.seen(client.device.id);
         log(`${client.device.name} disconnected`);
