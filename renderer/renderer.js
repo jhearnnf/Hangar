@@ -2334,22 +2334,19 @@ async function refreshUsage() {
   // same colour here as they do on their bars.
   const parts = [];
 
-  // Only while there is headroom left. Once a window is spent the banner is
-  // saying all of this in a size worth reading, and repeating it down here in
-  // 9px grey would only be somewhere else to have to look.
-  if (!spent) {
-    const resets = [];
-    for (const key of ['fiveHour', 'sevenDay']) {
-      const left = usage[key] && formatIn(usage[key].resetsAt - Date.now());
-      if (!left) continue;
-      const name = document.createElement('span');
-      name.className = key;
-      name.textContent = USAGE_LABELS[key];
-      if (resets.length) resets.push(', ');
-      resets.push(name, ` ${left}`);
-    }
-    if (resets.length) parts.push(['resets in ', ...resets]);
+  // Always shown, capped or not: the banner is a louder copy of one of these,
+  // not a replacement for the line the eye already knows where to find.
+  const resets = [];
+  for (const key of ['fiveHour', 'sevenDay']) {
+    const left = usage[key] && formatIn(usage[key].resetsAt - Date.now());
+    if (!left) continue;
+    const name = document.createElement('span');
+    name.className = key;
+    name.textContent = USAGE_LABELS[key];
+    if (resets.length) resets.push(', ');
+    resets.push(name, ` ${left}`);
   }
+  if (resets.length) parts.push(['resets in ', ...resets]);
 
   // Only mentioned once the figures are actually old — during a rate-limit or
   // an outage these are the last good ones rather than the current ones, and
