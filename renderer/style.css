@@ -169,7 +169,14 @@ html, body {
   color: var(--faint);
   font-size: 9px;
   line-height: 1.5;
+  font-weight: 600;
 }
+
+/* Each window keeps its own colour, both on its row and wherever the note
+   below mentions it, so the two can be told apart at a glance. Neither is a
+   stage colour or the accent, which the bars already use to mean something. */
+.usage-name.fiveHour, .usage-note .fiveHour { color: #5cc8d6; }
+.usage-name.sevenDay, .usage-note .sevenDay { color: #b392f0; }
 
 .usage-track {
   flex: 1 1 auto;

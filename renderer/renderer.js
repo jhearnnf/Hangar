@@ -2330,6 +2330,8 @@ async function refreshUsage() {
   const spent = USAGE_LABELS[usage.capped] ? usage.capped : null;
   setCapped(spent, spent ? usage[spent].resetsAt : null);
 
+  // Each part is a list of text and nodes, so the window names can carry the
+  // same colour here as they do on their bars.
   const parts = [];
 
   // Only while there is headroom left. Once a window is spent the banner is
@@ -2339,19 +2341,24 @@ async function refreshUsage() {
     const resets = [];
     for (const key of ['fiveHour', 'sevenDay']) {
       const left = usage[key] && formatIn(usage[key].resetsAt - Date.now());
-      if (left) resets.push(`${USAGE_LABELS[key]} ${left}`);
+      if (!left) continue;
+      const name = document.createElement('span');
+      name.className = key;
+      name.textContent = USAGE_LABELS[key];
+      if (resets.length) resets.push(', ');
+      resets.push(name, ` ${left}`);
     }
-    if (resets.length) parts.push(`resets in ${resets.join(', ')}`);
+    if (resets.length) parts.push(['resets in ', ...resets]);
   }
 
   // Only mentioned once the figures are actually old — during a rate-limit or
   // an outage these are the last good ones rather than the current ones, and
   // silently showing them as current would be the wrong kind of reassuring.
   if (usage.stale && usage.at) {
-    parts.push(`as of ${new Date(usage.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`);
+    parts.push([`as of ${new Date(usage.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`]);
   }
 
-  usageNote.textContent = parts.join(' · ');
+  usageNote.replaceChildren(...parts.flatMap((part, i) => (i ? [' · ', ...part] : part)));
   usageNote.hidden = parts.length === 0;
 }
 
