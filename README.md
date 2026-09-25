@@ -22,6 +22,27 @@ afterwards from the **Settings** cog at the foot of the sidebar, which also hold
 things this asks nothing about on a first run: whether your phone may connect, and whether
 Hangar starts with Windows.
 
+## Project workspace
+
+Select a project or terminal to show its workspace above the terminal. The left side
+stores startup commands; **Run startup scripts** runs each non-empty line independently
+in that project's folder, without changing the selected terminal. The command field is
+locked while scripts run, with live output in a translucent overlay. **Stop startup scripts**
+stops the processes and unlocks editing; editing also unlocks when all scripts exit.
+Output stays available until dismissed. Each line should be a complete shell command, for
+example `npm run dev` or `cd backend && npm run dev` when supported by your shell.
+
+The right side contains titled notes. Use the arrows to change pages and **+** to add a
+page. Edits autosave, and the status below the notes reports save failures. Drag the
+divider above the terminal to adjust the panel's height. The height is remembered;
+double-click the divider to reset it, or focus it and use the up/down arrow keys.
+
+Files live in `<project>/.hangar-local/`: `startup.txt` holds the commands and each
+`page-*.txt` holds a title on its first line followed by its notes. The folder's own
+`.gitignore` excludes all its contents, including when Git is initialized later.
+Hangar refuses to save if this folder already contains tracked files. These are plain
+text files and are included in configured Hangar backups.
+
 ## On a Mac
 
 `npm install && npm start` is the whole of it there too — `node-pty` ships `darwin-arm64`

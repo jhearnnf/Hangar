@@ -102,9 +102,42 @@
       <button id="findclose" title="Close (Esc)">&#10005;</button>
     </div>
 
+    <section id="workspace" class="workspace" aria-label="Project workspace" hidden>
+      <div class="startup-panel">
+        <div class="startup-heading">
+          <label for="startupcommands">Startup scripts <span id="workspaceproject"></span></label>
+          <span id="startupscrollhint" class="startup-scroll-hint" title="Scroll sideways or use the arrow keys to see the rest of each command">&#8596; scroll</span>
+        </div>
+        <div class="startup-editor">
+          <textarea id="startupcommands" wrap="off" aria-describedby="startupscrollhint" placeholder="One startup command per line" spellcheck="false" autocomplete="off"></textarea>
+          <div id="startupoutput" class="startup-output" hidden>
+            <button id="startupoutputclose" aria-label="Close startup output" title="Close output" hidden>&times;</button>
+            <pre id="startupoutputtext" tabindex="0" aria-label="Startup script output"></pre>
+          </div>
+        </div>
+        <button id="runstartup" disabled>Run startup scripts</button>
+      </div>
+      <div class="notes-panel">
+        <div class="notes-header">
+          <button id="noteprev" aria-label="Previous notes page">&#8592;</button>
+          <input id="notetitle" aria-label="Notes page title" placeholder="Page title" maxlength="200" autocomplete="off" />
+          <span id="notecount"></span>
+          <button id="noteadd" aria-label="Add notes page" title="Add notes page">+</button>
+          <button id="notenext" aria-label="Next notes page">&#8594;</button>
+        </div>
+        <textarea id="notebody" aria-label="Project notes" placeholder="Project notes, test accounts, TODOs…" spellcheck="false" autocomplete="off"></textarea>
+        <div id="workspacestatus" role="status"></div>
+      </div>
+    </section>
+
+    <div id="workspaceresize" class="workspace-resize" role="separator" aria-label="Resize project workspace" aria-orientation="horizontal" aria-controls="workspace" tabindex="0" title="Drag to resize · Double-click to reset"></div>
     <div id="panes" class="panes">
       <div id="empty" class="empty">
-        <p>Pick a project and press <span class="key">+</span> to open a terminal.</p>
+        <div class="empty-message">
+          <span class="empty-symbol" aria-hidden="true">&gt;_</span>
+          <h2 id="emptytitle">Choose a project</h2>
+          <p id="emptyhint">Select a project to view its notes, startup scripts and terminals.</p>
+        </div>
       </div>
     </div>
   </main>
@@ -432,4 +465,6 @@
 <script src="../project-name.js"></script>
 <script src="classify.js"></script>
 <script src="../agents.js"></script>
+<script src="workspace.js"></script>
+<script src="workspace-resize.js"></script>
 <script src="renderer.js"></script>

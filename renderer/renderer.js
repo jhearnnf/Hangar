@@ -3,6 +3,7 @@
 /* global Terminal, FitAddon, WebglAddon, SearchAddon, WebLinksAddon, Unicode11Addon, Classify, ProjectName, Agents */
 
 const api = window.hangar;
+const projectWorkspace = window.createProjectWorkspace(api);
 const $ = (id) => document.getElementById(id);
 
 const sidebar = $('sidebar');
@@ -17,6 +18,7 @@ const findInput = $('findinput');
 const tabs = new Map();
 let order = [];          // tab ids, in creation order
 let activeId = null;
+let selectedProject = null;
 let projects = [];
 let projectsRoot = '';   // the folder new projects are created in
 let ignoredNames = [];   // folder names the sidebar never lists
@@ -43,7 +45,7 @@ function setAgent(id) {
   $('agenttoggle').setAttribute('aria-checked', String(agent.id === 'codex'));
   $('footagent').textContent = agent.label;
   $('procsagent').textContent = agent.label;
-  $('projectmenu').setAttribute('aria-label', `Recent ${agent.label} sessions`);
+  $('projectmenu').setAttribute('aria-label', 'Recent Claude and Codex sessions');
 }
 
 // Silence for this long means a terminal has finished whatever it was doing —
@@ -99,7 +101,30 @@ function toggleSidebar() {
 }
 
 function updateEmpty() {
-  emptyState.hidden = order.length > 0;
+  emptyState.hidden = Boolean(activeId);
+  $('emptytitle').textContent = selectedProject ? 'no terminals open' : 'Choose a project';
+  $('emptyhint').textContent = selectedProject
+    ? 'Double-click the project or press + to open a terminal.'
+    : 'Select a project to view its notes, startup scripts and terminals.';
+}
+
+function selectProject(project) {
+  selectedProject = project;
+  const first = terminalsIn(project.path)[0];
+  if (first) {
+    activate(first.id);
+    return;
+  }
+  const previous = tabs.get(activeId);
+  if (previous) previous.term.blur();
+  activeId = null;
+  projectWorkspace.show(project);
+  for (const tab of tabs.values()) {
+    tab.pane.hidden = true;
+    paint(tab);
+  }
+  for (const projectPath of projectRows.keys()) paintProjectRow(projectPath);
+  updateEmpty();
 }
 
 // ----------------------------------------------------------------- sidebar
@@ -131,6 +156,7 @@ function paintProjectRow(projectPath) {
   const sync = syncIcon(projectPath);
   // No terminals, no claim to make: the name stays the default grey.
   row.className = 'project-row'
+    + (selectedProject?.path === projectPath ? ' selected' : '')
     + (stage ? ' state-' + stage : '')
     + (sync ? ' backup-' + sync : '');
 
@@ -217,8 +243,13 @@ function menuRow(project, row) {
   item.className = 'pmenu-item' + (row.live ? ' live' : '');
   item.setAttribute('role', 'menuitem');
   item.innerHTML = '<span class="pmenu-label"></span>'
+    + '<span class="pmenu-agent"></span>'
     + (row.live ? '<span class="pmenu-live">live</span>' : '<span class="pmenu-when"></span>');
   item.querySelector('.pmenu-label').textContent = row.label;
+  const source = Agents.get(row.agentId);
+  const badge = item.querySelector('.pmenu-agent');
+  badge.textContent = source.id === 'claude' ? 'Claude' : source.name;
+  badge.classList.add(source.id);
 
   // A running session is listed and not offered. `disabled` would have been the
   // obvious way to say so and is the wrong one: a disabled button takes no
@@ -226,13 +257,13 @@ function menuRow(project, row) {
   if (row.live) {
     item.setAttribute('aria-disabled', 'true');
     item.tabIndex = -1;
-    item.title = `${row.label}\n\nThis one is open now. Resuming it again would put two`
+    item.title = `${source.name}: ${row.label}\n\nThis one is open now. Resuming it again would put two`
       + ` of them on the same conversation, so it has to be closed first.`;
     return item;
   }
 
   item.querySelector('.pmenu-when').textContent = ago(row.at);
-  item.title = `${row.label}\n\n${new Date(row.at).toLocaleString()}\n${row.command}`;
+  item.title = `${source.name}: ${row.label}\n\n${new Date(row.at).toLocaleString()}\n${row.command}`;
   item.addEventListener('click', () => {
     closeProjectMenu();
     newTerminal(project, row.command);
@@ -299,7 +330,7 @@ async function openProjectMenu(project, x, y) {
   try {
     rows = await api.recentSessions(project.path);
   } catch (err) {
-    console.error(`Hangar: could not read ${agent.label} history`, err);
+    console.error('Hangar: could not read agent history', err);
     rows = [];
   }
   if (token !== menuToken) return;
@@ -309,7 +340,7 @@ async function openProjectMenu(project, x, y) {
   for (const id of Agents.IDS) projectMenuNew.appendChild(newRow(project, Agents.get(id)));
   projectMenuNew.appendChild(newRow(project, { label: 'plain shell', command: null }));
 
-  projectMenuHead.textContent = `Recent ${agent.label} sessions — ${project.name}`;
+  projectMenuHead.textContent = `Recent sessions — ${project.name}`;
   projectMenuList.textContent = '';
   paintOpenItem(project);
   paintRenameItem(project);
@@ -762,6 +793,7 @@ function renderProject(project, wrap) {
       toggleProject(project.path);
     });
   }
+  row.addEventListener('click', () => selectProject(project));
   row.addEventListener('dblclick', (e) => {
     if (e.target.classList.contains('add') || e.target.classList.contains('twisty')) return;
     newTerminal(project, e.shiftKey ? null : agent.command);
@@ -1437,7 +1469,7 @@ async function adoptSession(summary) {
   // Only if there is nothing to interrupt. A terminal opened on the phone
   // appearing in the sidebar is welcome; it yanking the pane out from under
   // whatever is being read at the desk is not.
-  const showing = !activeId;
+  const showing = !activeId && (!selectedProject || selectedProject.path === tab.projectPath);
   if (showing) activate(tab.id);
 
   updateEmpty();
@@ -1706,15 +1738,20 @@ function activate(id) {
   const tab = tabs.get(id);
   if (!tab) return;
   activeId = id;
+  selectedProject = { path: tab.projectPath, name: tab.projectName };
+  projectWorkspace.show(selectedProject);
 
   for (const t of tabs.values()) {
     const on = t.id === id;
     t.pane.hidden = !on;
     paint(t);
   }
+  for (const projectPath of projectRows.keys()) paintProjectRow(projectPath);
+  updateEmpty();
 
   // A hidden pane has no size, so it can only be measured once visible.
   requestAnimationFrame(() => {
+    if (activeId !== tab.id) return;
     refit(tab, { force: true });
     tab.term.focus();
   });
@@ -1741,7 +1778,6 @@ function refit(tab, { force = false } = {}) {
 function closeTab(id) {
   const tab = tabs.get(id);
   if (!tab) return;
-  const idx = order.indexOf(id);
 
   clearTimeout(tab.idleTimer);
   clearTimeout(tab.classifyTimer);
@@ -1753,8 +1789,7 @@ function closeTab(id) {
   order = order.filter((x) => x !== id);
 
   if (activeId === id) {
-    activeId = order.length ? order[Math.min(idx, order.length - 1)] : null;
-    if (activeId) activate(activeId);
+    selectProject({ path: tab.projectPath, name: tab.projectName });
   }
 
   renderSidebar();
@@ -1770,7 +1805,7 @@ function cycle(delta) {
 function activeProject() {
   const tab = tabs.get(activeId);
   if (tab) return { name: tab.projectName, path: tab.projectPath };
-  return projects[0] || null;
+  return selectedProject || projects[0] || null;
 }
 
 // ---------------------------------------------------------------- pty wiring

@@ -20,6 +20,7 @@ const { createMonitor, createSystemReader } = require('./processes');
 const { createSessions } = require('./sessions');
 const { recentFor } = require('./transcripts');
 const { recentFor: recentCodexFor } = require('./codex-sessions');
+const { recentAll } = require('./recent-sessions');
 const { createDevices, DEVICES_FILE } = require('./devices');
 const { createServer } = require('./server');
 const { lanAddresses, startResponder, DISCOVERY_PORT } = require('./discovery');
@@ -29,6 +30,23 @@ const {
   CONFIG_FILE, suggestions, parseConfig, resolveConfig, validateConfig,
 } = require('./config');
 const Agents = require('./agents');
+const workspace = require('./project-workspace');
+const { createStartupScripts } = require('./startup-scripts');
+const startupScripts = createStartupScripts({ changed: (state) => toWindow('startup:changed', state) });
+ipcMain.handle('startup:state', (_event, projectPath) => startupScripts.snapshot(workspaceProject(projectPath)));
+ipcMain.handle('startup:start', (_event, { projectPath, commands }) => startupScripts.start(workspaceProject(projectPath), commands));
+ipcMain.handle('startup:stop', (_event, projectPath) => startupScripts.stop(workspaceProject(projectPath)));
+
+function workspaceProject(projectPath) {
+  const project = listProjects(config.projectsRoot).find((p) => p.path === projectPath);
+  if (!project) throw new Error('Project is no longer available.');
+  return project.path;
+}
+
+ipcMain.handle('workspace:load', (_event, projectPath) => workspace.load(workspaceProject(projectPath)));
+ipcMain.handle('workspace:save', (_event, { projectPath, value }) => {
+  workspace.save(workspaceProject(projectPath), value);
+});
 
 let win = null;
 
@@ -478,7 +496,8 @@ ipcMain.handle('projects:create', (_event, { name }) => {
 /** How many of Hangar's terminals are open in a folder. */
 function terminalsIn(dir) {
   const wanted = path.resolve(dir);
-  return sessions.list().filter((s) => path.resolve(s.projectPath) === wanted).length;
+  return sessions.list().filter((s) => path.resolve(s.projectPath) === wanted).length
+    + (startupScripts.snapshot(dir).running ? 1 : 0);
 }
 
 /**
@@ -720,6 +739,7 @@ app.on('before-quit', () => {
   // the quit is where they end — before the sweep below, so the copy it makes
   // is of a folder nothing is still writing to.
   sessions.killAll();
+  try { startupScripts.stopAll(); } catch (err) { console.error('Could not stop startup scripts', err); }
   // The sampler is a child of ours like any other, and one left behind would be
   // a PowerShell looping over every process on the machine with nobody reading
   // it. Harmless only until the next launch starts a second.
@@ -869,7 +889,7 @@ function recentSessions(projectPath) {
   }
 }
 
-ipcMain.handle('sessions:recent', (_event, { projectPath }) => recentSessions(projectPath));
+ipcMain.handle('sessions:recent', (_event, { projectPath }) => recentAll(projectPath));
 
 /**
  * The one thing "posix_spawnp failed." is nearly always about.
