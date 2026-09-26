@@ -14,6 +14,7 @@ function setup() {
       addEventListener(name, fn) { this[name] = fn; },
       querySelectorAll() { return [...fields.values()].filter((f) => f !== this); },
       focus() {}, select() {},
+      setAttribute() {},
     });
     return fields.get(id);
   }
@@ -25,14 +26,40 @@ function setup() {
     stopScripts: vi.fn(async (projectPath) => ({ projectPath, running: false, output: 'Stopped\n' })),
     loadWorkspace: vi.fn(async (path) => ({ startup: path === 'A' ? 'npm run dev\nnpm run api' : '', pages: [{ id: 'page-1', title: path, body: '' }] })),
     saveWorkspace: vi.fn(async () => {}),
+    openApp: vi.fn(async () => {}),
   };
   const run = vi.fn(async () => {});
   const window = { addEventListener: (name, fn) => { handlers[name] = fn; }, close: vi.fn() };
+  vm.runInNewContext(fs.readFileSync(new URL('../renderer/local-app-url.js', import.meta.url), 'utf8'), { window, URL });
   vm.runInNewContext(fs.readFileSync(new URL('../renderer/workspace.js', import.meta.url), 'utf8'), {
     window, document: { getElementById: get }, crypto: { randomUUID }, setTimeout, clearTimeout,
   });
   return { workspace: window.createProjectWorkspace(api, run), api, run, get, handlers, window };
 }
+
+it('saves app links per project and opens only valid local URLs', async () => {
+  const { workspace, get, api } = setup();
+  await workspace.show({ path: 'A', name: 'Alpha' });
+  expect(get('openapp').hidden).toBe(true);
+  get('appurl').value = 'localhost:3000/dashboard';
+  get('appurl').input();
+  expect(get('openapp').disabled).toBe(false);
+  await get('openapp').onclick();
+  expect(api.openApp).toHaveBeenCalledWith('http://localhost:3000/dashboard');
+  await workspace.show({ path: 'B', name: 'Beta' });
+  expect(api.saveWorkspace.mock.calls[0][1].appUrl).toBe('localhost:3000/dashboard');
+  expect(get('appurl').value).toBe('');
+  await workspace.show({ path: 'A', name: 'Alpha' });
+  expect(get('appurl').value).toBe('localhost:3000/dashboard');
+  get('appurl').value = 'https://example.com';
+  get('appurl').input();
+  expect(get('openapp').disabled).toBe(true);
+  await get('openapp').onclick();
+  expect(api.openApp).toHaveBeenCalledTimes(1);
+  get('appurl').value = '';
+  get('appurl').input();
+  await workspace.show({ path: 'B', name: 'Beta' });
+});
 
 it('saves titles and bodies before adding or switching pages and projects', async () => {
   const { workspace, get, api } = setup();

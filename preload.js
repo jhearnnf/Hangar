@@ -5,6 +5,7 @@ const { contextBridge, ipcRenderer, clipboard } = require('electron');
 contextBridge.exposeInMainWorld('hangar', {
   listProjects: () => ipcRenderer.invoke('projects:list'),
   loadWorkspace: (projectPath) => ipcRenderer.invoke('workspace:load', projectPath),
+  openApp: (url) => ipcRenderer.invoke('workspace:open-app', url),
   startupState: (projectPath) => ipcRenderer.invoke('startup:state', projectPath),
   startScripts: (projectPath, commands) => ipcRenderer.invoke('startup:start', { projectPath, commands }),
   stopScripts: (projectPath) => ipcRenderer.invoke('startup:stop', projectPath),

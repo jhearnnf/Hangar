@@ -50,11 +50,13 @@ function load(projectPath) {
       const split = text.indexOf('\n');
       return { id: name.slice(0, -4), title: split < 0 ? text : text.slice(0, split).replace(/\r$/, ''), body: split < 0 ? '' : text.slice(split + 1) };
     }) : [];
-  return { startup, pages };
+  const appUrl = read(path.join(dir, 'app-url.txt'));
+  return { startup, pages, appUrl };
 }
 
 function save(projectPath, value) {
-  const { startup, page } = value;
+  const { startup, page, appUrl } = value;
+  if (appUrl !== undefined && (typeof appUrl !== 'string' || appUrl.length > 4096)) throw new Error('Invalid app link.');
   if (startup !== undefined && (typeof startup !== 'string' || startup.length > 100000)) throw new Error('Invalid startup commands.');
   if (page && (!/^page-[a-z0-9-]+$/.test(page.id) || typeof page.title !== 'string' || /[\r\n]/.test(page.title) || page.title.length > 200 || typeof page.body !== 'string' || page.body.length > 2000000)) throw new Error('Invalid notes page.');
   const dir = prepare(projectPath);
@@ -67,6 +69,7 @@ function save(projectPath, value) {
     fs.renameSync(temp, target);
   }
   if (startup !== undefined) write('startup.txt', startup);
+  if (appUrl !== undefined) write('app-url.txt', appUrl);
   if (page) write(page.id + '.txt', page.title + '\n' + page.body);
 }
 

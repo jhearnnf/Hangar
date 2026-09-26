@@ -15,7 +15,7 @@ afterEach(() => { for (const root of roots.splice(0)) fs.rmSync(root, { recursiv
 describe('project workspace', () => {
   it('loads an empty project without creating files', () => {
     const dir = project();
-    expect(workspace.load(dir)).toEqual({ startup: '', pages: [] });
+    expect(workspace.load(dir)).toEqual({ startup: '', pages: [], appUrl: '' });
     expect(fs.readdirSync(dir)).toEqual([]);
   });
   it('persists separate titled text pages and commands independently per project', () => {
@@ -23,11 +23,20 @@ describe('project workspace', () => {
     const page = { id: 'page-1', title: 'Test accounts', body: 'dev@example.test\npassword: test\n' };
     workspace.save(dir, { startup: 'npm run dev\nnpm run api', page });
     workspace.save(dir, { page: { id: 'page-2', title: 'TODO', body: 'Fix UI' } });
-    expect(workspace.load(dir)).toEqual({ startup: 'npm run dev\nnpm run api', pages: [page, { id: 'page-2', title: 'TODO', body: 'Fix UI' }] });
+    expect(workspace.load(dir)).toEqual({ startup: 'npm run dev\nnpm run api', pages: [page, { id: 'page-2', title: 'TODO', body: 'Fix UI' }], appUrl: '' });
     expect(fs.readFileSync(path.join(dir, '.hangar-local', 'page-1.txt'), 'utf8')).toBe('Test accounts\ndev@example.test\npassword: test\n');
     expect(workspace.load(project()).pages).toEqual([]);
     workspace.save(dir, { page: { ...page, title: 'Updated' } });
     expect(workspace.load(dir).pages[0].title).toBe('Updated');
+  });
+  it('persists, preserves and clears the app link independently per project', () => {
+    const dir = project();
+    workspace.save(dir, { appUrl: 'localhost:3000/app' });
+    workspace.save(dir, { startup: 'npm run dev' });
+    expect(workspace.load(dir).appUrl).toBe('localhost:3000/app');
+    expect(workspace.load(project()).appUrl).toBe('');
+    workspace.save(dir, { appUrl: '' });
+    expect(workspace.load(dir).appUrl).toBe('');
   });
   it('ignores all local files even when Git is initialized after saving', () => {
     const dir = project();

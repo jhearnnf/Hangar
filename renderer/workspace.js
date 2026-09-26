@@ -6,6 +6,15 @@ window.createProjectWorkspace = function (api) {
   const commands = el('startupcommands');
   const title = el('notetitle');
   const body = el('notebody');
+  const appUrl = el('appurl');
+  function paintAppLink() {
+    const invalid = Boolean(appUrl.value.trim() && !window.localAppUrl(appUrl.value));
+    el('openapp').hidden = !appUrl.value.trim();
+    el('openapp').disabled = invalid || loading || !current;
+    appUrl.setAttribute('aria-invalid', String(invalid));
+    el('appurlhint').hidden = !invalid;
+    el('appurlhint').textContent = invalid ? 'Use a localhost URL, e.g. localhost:3000.' : '';
+  }
   const states = new Map();
   let current = null;
   let generation = 0;
@@ -64,7 +73,7 @@ window.createProjectWorkspace = function (api) {
   function flush(state) {
     clearTimeout(state.timer);
     if (!state.dirty) return state.pending;
-    const value = { startup: state.startup, page: { ...state.pages[state.index] } };
+    const value = { startup: state.startup, appUrl: state.appUrl || '', page: { ...state.pages[state.index] } };
     state.dirty = false;
     state.saving = (state.saving || 0) + 1;
     state.pending = state.pending.then(() => api.saveWorkspace(state.project.path, value)).then(() => {
@@ -86,6 +95,8 @@ window.createProjectWorkspace = function (api) {
     updateScrollHint();
     if (!current) return;
     current.startup = commands.value;
+    current.appUrl = appUrl.value;
+    paintAppLink();
     Object.assign(current.pages[current.index], { title: title.value, body: body.value });
     current.dirty = true;
     status(current, 'Saving…');
@@ -137,6 +148,8 @@ window.createProjectWorkspace = function (api) {
       loading = false;
       for (const field of panel.querySelectorAll('input, textarea, button')) field.disabled = false;
       commands.value = state.startup;
+      appUrl.value = state.appUrl || '';
+      paintAppLink();
       commands.scrollLeft = 0;
       updateScrollHint();
       paintScripts();
@@ -147,16 +160,28 @@ window.createProjectWorkspace = function (api) {
       current = null;
       loading = false;
       commands.value = title.value = body.value = '';
+      appUrl.value = '';
+      paintAppLink();
       updateScrollHint();
       el('workspacestatus').textContent = 'Could not load: ' + err.message;
       el('workspacestatus').classList.add('error');
     }
   }
 
-  for (const field of [commands, title, body]) {
+  for (const field of [commands, title, body, appUrl]) {
     field.addEventListener('input', changed);
     field.addEventListener('blur', () => { if (current) flush(current); });
   }
+  el('openapp').onclick = async () => {
+    const state = current;
+    const url = window.localAppUrl(appUrl.value);
+    if (!state || loading || !url) return;
+    try { await api.openApp(url); }
+    catch (err) { status(state, 'Could not open app: ' + err.message, true); }
+  };
+  appUrl.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') { event.preventDefault(); el('openapp').onclick(); }
+  });
   async function navigate(delta) {
     const state = current;
     if (!state) return;

@@ -126,7 +126,14 @@
           <button id="notenext" aria-label="Next notes page">&#8594;</button>
         </div>
         <textarea id="notebody" aria-label="Project notes" placeholder="Project notes, test accounts, TODOs…" spellcheck="false" autocomplete="off"></textarea>
-        <div id="workspacestatus" role="status"></div>
+        <div class="notes-footer">
+          <div id="workspacestatus" role="status"></div>
+          <div class="app-link">
+            <input id="appurl" type="text" aria-label="Local app URL" aria-describedby="appurlhint" placeholder="localhost:3000" maxlength="4096" spellcheck="false" autocomplete="off" title="Local app URL · saved per project" />
+            <button id="openapp" hidden title="Open in your default browser">Open app</button>
+          </div>
+          <span id="appurlhint" role="status" hidden></span>
+        </div>
       </div>
     </section>
 
@@ -465,6 +472,7 @@
 <script src="../project-name.js"></script>
 <script src="classify.js"></script>
 <script src="../agents.js"></script>
+<script src="local-app-url.js"></script>
 <script src="workspace.js"></script>
 <script src="workspace-resize.js"></script>
 <script src="renderer.js"></script>

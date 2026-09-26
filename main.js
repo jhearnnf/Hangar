@@ -31,6 +31,12 @@ const {
 } = require('./config');
 const Agents = require('./agents');
 const workspace = require('./project-workspace');
+const { localAppUrl } = require('./renderer/local-app-url');
+ipcMain.handle('workspace:open-app', async (_event, value) => {
+  const url = localAppUrl(value);
+  if (!url) throw new Error('Enter a valid localhost URL.');
+  await electronShell.openExternal(url);
+});
 const { createStartupScripts } = require('./startup-scripts');
 const startupScripts = createStartupScripts({ changed: (state) => toWindow('startup:changed', state) });
 ipcMain.handle('startup:state', (_event, projectPath) => startupScripts.snapshot(workspaceProject(projectPath)));
