@@ -219,10 +219,13 @@ body.workspace-resizing, body.workspace-resizing * { cursor: ns-resize !importan
 .usage[hidden] { display: none; }
 
 .usage-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) 26px;
   align-items: center;
-  gap: 6px;
+  gap: 2px 6px;
 }
+
+.usage-row + .usage-row { margin-top: 5px; }
 
 .usage-name {
   flex: 0 0 14px;
@@ -232,11 +235,8 @@ body.workspace-resizing, body.workspace-resizing * { cursor: ns-resize !importan
   font-weight: 600;
 }
 
-/* Each window keeps its own colour, both on its row and wherever the note
-   below mentions it, so the two can be told apart at a glance. Neither is a
-   stage colour or the accent, which the bars already use to mean something. */
-.usage-name.fiveHour, .usage-note .fiveHour { color: #5cc8d6; }
-.usage-name.sevenDay, .usage-note .sevenDay { color: #b392f0; }
+/* Keep window labels quiet and give the remaining time the emphasis. */
+.usage-time { color: var(--text); font-variant-numeric: tabular-nums; }
 
 .usage-track {
   flex: 1 1 auto;
@@ -274,6 +274,15 @@ body.workspace-resizing, body.workspace-resizing * { cursor: ns-resize !importan
   font-size: 9px;
   line-height: 1.5;
 }
+
+.usage-reset {
+  grid-column: 2 / -1;
+  color: var(--faint);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.usage-reset[hidden] { display: none; }
 
 /* Nothing to say happens often — most of the time the bars are simply current
    and not near anything. Hidden rather than left empty so the rows above do

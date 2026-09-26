@@ -2162,11 +2162,11 @@ window.addEventListener('focus', () => {
 const usageBox = $('usage');
 const usageNote = $('usagenote');
 const usageBars = {
-  fiveHour: { fill: $('usage5hfill'), pct: $('usage5hpct') },
-  sevenDay: { fill: $('usage7dfill'), pct: $('usage7dpct') },
+  fiveHour: { fill: $('usage5hfill'), pct: $('usage5hpct'), reset: $('usage5hreset') },
+  sevenDay: { fill: $('usage7dfill'), pct: $('usage7dpct'), reset: $('usage7dreset') },
 };
 
-// The same short names the rows are labelled with, for the note below them.
+// The same short names the rows are labelled with.
 const USAGE_LABELS = { fiveHour: '5h', sevenDay: '7d' };
 
 // Said in full in the banner, which has the room for it and is being read once
@@ -2375,23 +2375,16 @@ async function refreshUsage() {
   const spent = USAGE_LABELS[usage.capped] ? usage.capped : null;
   setCapped(spent, spent ? usage[spent].resetsAt : null);
 
-  // Each part is a list of text and nodes, so the window names can carry the
-  // same colour here as they do on their bars.
   const parts = [];
 
   // Always shown, capped or not: the banner is a louder copy of one of these,
   // not a replacement for the line the eye already knows where to find.
-  const resets = [];
   for (const key of ['fiveHour', 'sevenDay']) {
     const left = usage[key] && formatIn(usage[key].resetsAt - Date.now());
-    if (!left) continue;
-    const name = document.createElement('span');
-    name.className = key;
-    name.textContent = USAGE_LABELS[key];
-    if (resets.length) resets.push(', ');
-    resets.push(name, ` ${left}`);
+    const reset = usageBars[key].reset;
+    reset.hidden = !left;
+    reset.querySelector('.usage-time').textContent = left || '';
   }
-  if (resets.length) parts.push(['resets in ', ...resets]);
 
   // Only mentioned once the figures are actually old — during a rate-limit or
   // an outage these are the last good ones rather than the current ones, and
