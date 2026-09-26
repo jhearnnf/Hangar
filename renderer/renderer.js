@@ -3,7 +3,12 @@
 /* global Terminal, FitAddon, WebglAddon, SearchAddon, WebLinksAddon, Unicode11Addon, Classify, ProjectName, Agents */
 
 const api = window.hangar;
-const projectWorkspace = window.createProjectWorkspace(api);
+const runningServers = new Set();
+const projectWorkspace = window.createProjectWorkspace(api, (runtime) => {
+  if (runtime.running) runningServers.add(runtime.projectPath);
+  else runningServers.delete(runtime.projectPath);
+  paintProjectRow(runtime.projectPath);
+});
 const $ = (id) => document.getElementById(id);
 
 const sidebar = $('sidebar');
@@ -161,6 +166,7 @@ function paintProjectRow(projectPath) {
     + (sync ? ' backup-' + sync : '');
 
   const badge = row.querySelector('.bsync');
+  row.querySelector('.server-running').hidden = !runningServers.has(projectPath);
   // Rebuilding the icon costs more than the class swap above, and this runs on
   // every line a terminal prints, so the markup is only touched on a change.
   if (badge.dataset.icon !== (sync || '')) {
@@ -776,6 +782,10 @@ function renderProject(project, wrap) {
     (mine.length ? '\nArrow expands' : '');
   row.innerHTML =
     '<span class="twisty"></span><span class="pname"></span>' +
+    '<span class="server-running" hidden role="img" aria-label="Server processes running" title="Server processes running · startup scripts are active">' +
+      '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.3">' +
+      '<rect x="2" y="2" width="12" height="5" rx="1.2"/><rect x="2" y="9" width="12" height="5" rx="1.2"/>' +
+      '<path d="M7 4.5h5M7 11.5h5"/><path d="M4 4.5h1M4 11.5h1" stroke-width="2"/></svg></span>' +
     '<span class="bsync"></span>' +
     `<button class="add" title="New ${agent.label} terminal here (shift-click for a plain shell)">+</button>`;
   row.querySelector('.pname').textContent = project.name;

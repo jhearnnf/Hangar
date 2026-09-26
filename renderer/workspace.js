@@ -1,6 +1,6 @@
 'use strict';
 
-window.createProjectWorkspace = function (api) {
+window.createProjectWorkspace = function (api, runtimeChanged = () => {}) {
   const el = (id) => document.getElementById(id);
   const panel = el('workspace');
   const commands = el('startupcommands');
@@ -19,6 +19,31 @@ window.createProjectWorkspace = function (api) {
   let current = null;
   let generation = 0;
   let loading = false;
+  let hintTimer;
+
+  function clearStartupHint() {
+    clearTimeout(hintTimer);
+    el('runstartup').classList.remove('startup-nudge');
+    el('startuprequired').classList.remove('visible');
+    el('startuprequired').setAttribute('aria-hidden', 'true');
+  }
+
+  function hintStartup(state) {
+    clearTimeout(hintTimer);
+    el('runstartup').classList.remove('startup-nudge');
+    el('startuprequiredtext').textContent = state.busy
+      ? 'Wait for startup scripts to finish starting or stopping.'
+      : state.startup.trim()
+        ? 'Run startup scripts first, then open your app.'
+        : 'Add a startup command, then run startup scripts to open your app.';
+    el('startuprequired').classList.add('visible');
+    el('startuprequired').setAttribute('aria-hidden', 'false');
+    const button = el('runstartup');
+    void button.offsetWidth; // Restart the pulse on repeated attempts.
+    button.classList.add('startup-nudge');
+    hintTimer = setTimeout(clearStartupHint, 2500);
+    if (!state.busy) (state.startup.trim() ? button : commands).focus();
+  }
 
   function paintScripts() {
     if (!current || loading) return;
@@ -49,11 +74,15 @@ window.createProjectWorkspace = function (api) {
   }
 
   api.onStartupChanged((runtime) => {
+    runtimeChanged(runtime);
     const state = states.get(runtime.projectPath);
     if (!state) return;
     state.runtime = runtime;
     dismissAfterStop(state);
-    if (current === state) paintScripts();
+    if (current === state) {
+      if (runtime.running) clearStartupHint();
+      paintScripts();
+    }
   });
   el('startupoutputclose').onclick = () => {
     if (current) { current.outputDismissed = true; paintScripts(); }
@@ -129,6 +158,7 @@ window.createProjectWorkspace = function (api) {
       if (previous.error) return;
     }
     panel.hidden = false;
+    clearStartupHint();
     loading = true;
     el('startupoutput').hidden = true;
     for (const field of panel.querySelectorAll('input, textarea, button')) field.disabled = true;
@@ -143,6 +173,7 @@ window.createProjectWorkspace = function (api) {
         states.set(project.path, state);
       }
       state.runtime = await api.startupState(project.path);
+      runtimeChanged(state.runtime);
       if (ticket !== generation) return;
       current = state;
       loading = false;
@@ -176,6 +207,8 @@ window.createProjectWorkspace = function (api) {
     const state = current;
     const url = window.localAppUrl(appUrl.value);
     if (!state || loading || !url) return;
+    if (state.busy || !state.runtime?.running) { hintStartup(state); return; }
+    clearStartupHint();
     try { await api.openApp(url); }
     catch (err) { status(state, 'Could not open app: ' + err.message, true); }
   };
@@ -210,6 +243,7 @@ window.createProjectWorkspace = function (api) {
     if (!state || state.busy || loading) return;
     const stopping = state.runtime?.running;
     if (!stopping && !state.startup.trim()) return;
+    clearStartupHint();
     state.busy = true;
     clearTimeout(state.dismissTimer);
     state.dismissWhenStopped = Boolean(stopping);
@@ -223,6 +257,7 @@ window.createProjectWorkspace = function (api) {
         if (state.error) return;
         state.runtime = await api.startScripts(state.project.path, state.startup);
       }
+      runtimeChanged(state.runtime);
     } catch (err) {
       state.dismissWhenStopped = false;
       status(state, `Could not ${stopping ? 'stop' : 'start'}: ` + err.message, true);

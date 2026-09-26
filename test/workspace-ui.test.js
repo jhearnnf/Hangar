@@ -10,11 +10,11 @@ function setup() {
   function get(id) {
     if (!fields.has(id)) fields.set(id, {
       value: '', disabled: false, hidden: true, textContent: '',
-      classList: { toggle() {}, add() {} },
+      classList: { toggle() {}, add: vi.fn(), remove: vi.fn() },
       addEventListener(name, fn) { this[name] = fn; },
       querySelectorAll() { return [...fields.values()].filter((f) => f !== this); },
       focus() {}, select() {},
-      setAttribute() {},
+      setAttribute: vi.fn(),
     });
     return fields.get(id);
   }
@@ -34,7 +34,8 @@ function setup() {
   vm.runInNewContext(fs.readFileSync(new URL('../renderer/workspace.js', import.meta.url), 'utf8'), {
     window, document: { getElementById: get }, crypto: { randomUUID }, setTimeout, clearTimeout,
   });
-  return { workspace: window.createProjectWorkspace(api, run), api, run, get, handlers, window };
+  const runtimeChanged = vi.fn();
+  return { workspace: window.createProjectWorkspace(api, runtimeChanged), api, run, runtimeChanged, get, handlers, window };
 }
 
 it('saves app links per project and opens only valid local URLs', async () => {
@@ -44,6 +45,7 @@ it('saves app links per project and opens only valid local URLs', async () => {
   get('appurl').value = 'localhost:3000/dashboard';
   get('appurl').input();
   expect(get('openapp').disabled).toBe(false);
+  await get('runstartup').onclick();
   await get('openapp').onclick();
   expect(api.openApp).toHaveBeenCalledWith('http://localhost:3000/dashboard');
   await workspace.show({ path: 'B', name: 'Beta' });
@@ -59,6 +61,56 @@ it('saves app links per project and opens only valid local URLs', async () => {
   get('appurl').value = '';
   get('appurl').input();
   await workspace.show({ path: 'B', name: 'Beta' });
+});
+
+it('guides Open app attempts to startup and blocks opening again after exit', async () => {
+  vi.useFakeTimers();
+  const { workspace, get, api, handlers, runtimeChanged } = setup();
+  await workspace.show({ path: 'A', name: 'Alpha' });
+  get('appurl').value = 'localhost:3000';
+  await get('openapp').onclick();
+  expect(api.openApp).not.toHaveBeenCalled();
+  expect(get('startuprequired').setAttribute).toHaveBeenLastCalledWith('aria-hidden', 'false');
+  expect(get('startuprequiredtext').textContent).toContain('Run startup scripts first');
+  expect(get('runstartup').classList.add).toHaveBeenCalledWith('startup-nudge');
+  get('runstartup').classList.remove.mockClear();
+  vi.advanceTimersByTime(1600);
+  expect(get('runstartup').classList.remove).not.toHaveBeenCalled();
+  await get('runstartup').onclick();
+  expect(get('runstartup').classList.remove).toHaveBeenCalledWith('startup-nudge');
+  expect(get('startuprequired').setAttribute).toHaveBeenLastCalledWith('aria-hidden', 'true');
+  expect(runtimeChanged).toHaveBeenLastCalledWith(expect.objectContaining({ projectPath: 'A', running: true }));
+  await get('openapp').onclick();
+  expect(api.openApp).toHaveBeenCalledTimes(1);
+  handlers.startup({ projectPath: 'A', running: false, output: 'Exited' });
+  expect(runtimeChanged).toHaveBeenLastCalledWith(expect.objectContaining({ running: false }));
+  await get('openapp').onclick();
+  expect(api.openApp).toHaveBeenCalledTimes(1);
+  await workspace.show({ path: 'B', name: 'Beta' });
+  expect(get('startuprequired').setAttribute).toHaveBeenLastCalledWith('aria-hidden', 'true');
+  get('appurl').value = 'localhost:4000';
+  get('appurl').keydown({ key: 'Enter', preventDefault() {} });
+  expect(get('startuprequiredtext').textContent).toContain('Add a startup command');
+  expect(api.openApp).toHaveBeenCalledTimes(1);
+});
+
+it('dismisses the startup hint after 2.5 seconds and renews it on repeated attempts', async () => {
+  vi.useFakeTimers();
+  const { workspace, get } = setup();
+  await workspace.show({ path: 'A', name: 'Alpha' });
+  get('appurl').value = 'localhost:3000';
+  await get('openapp').onclick();
+  vi.advanceTimersByTime(2000);
+  expect(get('startuprequired').setAttribute).toHaveBeenLastCalledWith('aria-hidden', 'false');
+  await get('openapp').onclick();
+  get('runstartup').classList.remove.mockClear();
+  vi.advanceTimersByTime(2499);
+  expect(get('runstartup').classList.remove).not.toHaveBeenCalled();
+  expect(get('startuprequired').setAttribute).toHaveBeenLastCalledWith('aria-hidden', 'false');
+  vi.advanceTimersByTime(1);
+  expect(get('startuprequired').setAttribute).toHaveBeenLastCalledWith('aria-hidden', 'true');
+  expect(get('startuprequired').classList.remove).toHaveBeenLastCalledWith('visible');
+  expect(get('runstartup').classList.remove).toHaveBeenCalledWith('startup-nudge');
 });
 
 it('saves titles and bodies before adding or switching pages and projects', async () => {
