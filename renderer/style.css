@@ -65,10 +65,10 @@ html, body {
 .startup-editor textarea { width: 100%; }
 .startup-editor textarea:disabled { color: var(--text); }
 .startup-editor:has(.startup-output:not([hidden])) textarea { filter: blur(1.5px); }
-.startup-output { position: absolute; inset: 0; border: 1px solid var(--line); border-radius: 4px; background: var(--bar); opacity: .35; overflow: hidden; }
+.startup-output { position: absolute; inset: 0; border: 1px solid color-mix(in srgb, var(--line) 35%, transparent); border-radius: 4px; background: color-mix(in srgb, var(--bar) 35%, transparent); overflow: hidden; }
 .startup-output[hidden], #startupoutputclose[hidden] { display: none; }
-.startup-output pre { margin: 0; height: 100%; overflow: auto; padding: 8px 26px 8px 8px; font: 11px/1.5 Consolas, monospace; color: #00ff00; user-select: text; white-space: pre-wrap; overflow-wrap: anywhere; scrollbar-width: thin; scrollbar-color: #343a46 transparent; }
-#startupoutputclose { position: absolute; top: 3px; right: 3px; padding: 0 5px; z-index: 1; }
+.startup-output pre { margin: 0; height: 100%; overflow: auto; padding: 8px 26px 8px 8px; font: 11px/1.5 Consolas, monospace; color: #00ff00; opacity: .35; user-select: text; white-space: pre-wrap; overflow-wrap: anywhere; scrollbar-width: thin; scrollbar-color: #343a46 transparent; }
+#startupoutputclose { position: absolute; top: 3px; right: 3px; padding: 0 6px; z-index: 1; font-size: 14px; line-height: 1.3; background: var(--bar); }
 .startup-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .startup-scroll-hint { visibility: hidden; color: var(--dim); font-size: 10px; line-height: 1.3; white-space: nowrap; }
 .startup-scroll-hint.visible { visibility: visible; }
