@@ -1644,6 +1644,7 @@ function wireLiveTab(tab) {
 
   term.onData((data) => sendInput(tab, data));
   term.onResize(({ cols, rows }) => api.resize(tab.id, cols, rows));
+  wireImages(tab);
 
   // Shift+Enter opens a new line instead of submitting. A terminal sends a bare
   // CR for both, so nothing on the far end can tell them apart; ESC+CR is the
@@ -1651,6 +1652,13 @@ function wireLiveTab(tab) {
   // for this, and shells read it as a meta-return they have nothing to do with.
   // Attached after the pty exists so an early keypress has somewhere to go.
   term.attachCustomKeyEventHandler((e) => {
+    // Ctrl+V and Alt+V are how Claude Code is asked to paste a picture. The
+    // key still goes through untouched; Hangar only keeps a copy to show.
+    if (e.type === 'keydown' && e.code === 'KeyV' && !e.shiftKey && !e.metaKey
+        && (e.ctrlKey !== e.altKey)) {
+      tab.paste.arm();
+      return true;
+    }
     if (e.type !== 'keydown' || e.key !== 'Enter') return true;
     if (!e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return true;
     e.preventDefault();
@@ -1661,6 +1669,48 @@ function wireLiveTab(tab) {
   paint(tab);
   return tab;
 }
+
+// ------------------------------------------------------------ pasted images
+
+/**
+ * The pictures pasted into a terminal, shown over its pane. The main process
+ * keeps them (see images.js), so this only shows what it is told and passes
+ * on what it sees: a paste going in, or an `[Image #N]` it has no picture for.
+ */
+function wireImages(tab) {
+  const term = tab.term;
+  tab.imagesAsked = 0;
+  tab.images = PastedImages.createImageTray({
+    host: tab.pane,
+    term,
+    remove: (key) => api.images.remove(tab.id, key),
+  });
+  tab.paste = PastedImages.createPasteWatcher({
+    term,
+    readImage: api.pasteImage,
+    onCapture: (n, url) => api.images.add(tab.id, n, url),
+  });
+  tab.scanner = PastedImages.createPlaceholderScanner({
+    term,
+    knows: (n) => tab.images.knows(n),
+    busy: () => tab.paste.busy(),
+    ask: (n, snippet) => api.images.find(tab.id, n, snippet),
+  });
+  refreshImages(tab);
+}
+
+async function refreshImages(tab) {
+  // Answers can cross on the way back; only the latest question's counts.
+  const ask = ++tab.imagesAsked;
+  const list = await api.images.list(tab.id);
+  if (tabs.get(tab.id) !== tab || ask !== tab.imagesAsked || !tab.images) return;
+  tab.images.set(list);
+}
+
+api.images.onChanged(({ id }) => {
+  const tab = tabs.get(id);
+  if (tab && tab.images) refreshImages(tab);
+});
 
 async function createTab(project, command) {
   // The pane is built first because a pty needs a size and the only honest
@@ -1792,6 +1842,11 @@ function closeTab(id) {
   clearTimeout(tab.idleTimer);
   clearTimeout(tab.classifyTimer);
   api.kill(id);
+  if (tab.images) {
+    tab.images.dispose();
+    tab.scanner.dispose();
+    tab.paste.dispose();
+  }
   tab.term.dispose();
   tab.pane.remove();
   tab.el.remove();
@@ -2008,6 +2063,7 @@ function copySelection() {
 function pasteClipboard() {
   const tab = tabs.get(activeId);
   const text = api.paste();
+  if (tab && tab.paste) tab.paste.arm();
   if (tab && text) sendInput(tab, text);
 }
 
@@ -2087,6 +2143,9 @@ window.addEventListener('keydown', (e) => {
     closeProjectMenu();
     if (e.key === 'Escape') { swallow(); return; }
   }
+
+  // A pasted picture open full size takes Escape and the arrows first.
+  if (PastedImages.handleKey(e)) { swallow(); return; }
 
   if (e.key === 'F11') { swallow(); api.toggleFullScreen(); return; }
 

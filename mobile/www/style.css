@@ -290,6 +290,76 @@ input, textarea { -webkit-user-select: text; user-select: text; }
 .term-pane { position: absolute; inset: 0; touch-action: none; }
 .term-pane[hidden] { display: none; }
 
+/* Pictures pasted into the terminal on the PC — the same tray the window has
+   (renderer/pasted-images.js), sized for a thumb. */
+.imgtray {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 5;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  max-width: calc(100% - 12px);
+  padding: 5px;
+  background: rgba(13, 15, 20, 0.92);
+  border: 1px solid #262a35;
+  border-radius: 8px;
+  touch-action: pan-x;
+}
+.imgtray[hidden] { display: none; }
+.imgtray.collapsed { padding: 2px; }
+.imgtray-strip { display: flex; gap: 6px; overflow-x: auto; min-width: 0; }
+.imgthumb {
+  position: relative;
+  flex: 0 0 auto;
+  height: 48px;
+  padding: 0;
+  border: 1px solid #262a35;
+  border-radius: 5px;
+  background: #12141a;
+  overflow: hidden;
+}
+.imgthumb.loading { width: 48px; }
+.imgthumb img { display: block; height: 100%; max-width: 90px; object-fit: cover; }
+.imgthumb-n {
+  position: absolute;
+  left: 3px;
+  bottom: 3px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.7);
+  color: #c9d1d9;
+  font: 10px/1.5 ui-monospace, monospace;
+}
+/* No hover on a phone, so removing is left to the PC. */
+.imgthumb-x { display: none; }
+.imgtray-toggle {
+  flex: 0 0 auto;
+  min-width: 32px;
+  height: 32px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #c9d1d9;
+  font-size: 14px;
+}
+.imgview {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px;
+  background: rgba(10, 12, 17, 0.94);
+}
+.imgview img { display: block; min-height: 0; max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 4px; }
+.imgview-cap, .imgview-wait { flex: 0 0 auto; color: #6e7681; font-size: 12px; }
+
 /* The keys the phone keyboard does not have. Scrolls sideways rather than
    wrapping, so the row stays one row however many keys end up on it. */
 .keybar {

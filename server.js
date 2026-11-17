@@ -64,6 +64,9 @@ function createServer(deps) {
   const {
     sessions,
     devices,
+    // Pictures pasted into each terminal (see images.js). Optional, like the
+    // rest of what is injected: a server without it simply shows none.
+    images = null,
     listProjects,
     createProject,
     usage,
@@ -148,9 +151,23 @@ function createServer(deps) {
     for (const client of clients) client.attached.delete(event.id);
   }
 
+  // Only the list goes out on a change — numbers and keys. The pictures
+  // themselves are megabytes each and are fetched one at a time, by a phone
+  // that is actually showing them.
+  function sendImages(client, id) {
+    if (images) send(client, { t: 'images', id, images: images.meta(id) });
+  }
+
+  function onImagesChanged({ id }) {
+    for (const client of clients) {
+      if (client.device && client.attached.has(id)) sendImages(client, id);
+    }
+  }
+
   sessions.on('data', onSessionData);
   sessions.on('session', onSessionEvent);
   sessions.on('exit', onSessionExit);
+  if (images) images.on('changed', onImagesChanged);
 
   // --------------------------------------------------------- the messages
 
@@ -258,6 +275,22 @@ function createServer(deps) {
         sessions.kill(message.id);
         return;
 
+      case 'image': {
+        const url = images ? images.get(message.id, message.key) : null;
+        send(client, { t: 'image', id: message.id, key: message.key, url });
+        return;
+      }
+
+      case 'imageRemove':
+        if (images) images.remove(message.id, message.key);
+        return;
+
+      // A replayed `[Image #N]` the phone has no picture for. Answered by the
+      // `images` broadcast if the transcript turns it up.
+      case 'imageFind':
+        if (images) images.find(message.id, message.n, message.snippet).catch(() => {});
+        return;
+
       case 'usage':
         send(client, { t: 'usage', usage: await usage() });
         return;
@@ -307,6 +340,7 @@ function createServer(deps) {
     }
     client.attached.set(id, { seq: Number.isFinite(sinceSeq) ? sinceSeq : 0, lagging: false });
     pump(client, id);
+    sendImages(client, id);
     // A full-screen program's current screen is not in the replay — it was
     // painted into a buffer, not printed. Ask it to draw itself again.
     sessions.nudge(id);
@@ -521,6 +555,7 @@ function createServer(deps) {
       sessions.off('data', onSessionData);
       sessions.off('session', onSessionEvent);
       sessions.off('exit', onSessionExit);
+      if (images) images.off('changed', onImagesChanged);
     },
   };
 }

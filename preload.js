@@ -1,6 +1,6 @@
 'use strict';
 
-const { contextBridge, ipcRenderer, clipboard } = require('electron');
+const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('hangar', {
   listProjects: () => ipcRenderer.invoke('projects:list'),
@@ -84,7 +84,22 @@ contextBridge.exposeInMainWorld('hangar', {
   onProjectsChanged: (cb) => ipcRenderer.on('projects:changed', () => cb()),
 
   // Electron's clipboard rather than navigator.clipboard, which needs a
-  // secure context we don't have under file://.
-  copy: (text) => clipboard.writeText(text),
-  paste: () => clipboard.readText(),
+  // secure context we don't have under file://. Read in the main process: a
+  // sandboxed preload is not given the clipboard module.
+  copy: (text) => ipcRenderer.send('clipboard:write', text),
+  paste: () => ipcRenderer.sendSync('clipboard:read'),
+  // The clipboard picture as a data URL, or null when it holds none. Read at
+  // the moment of a paste so a picture sent to Claude can be shown over the
+  // terminal it went into.
+  pasteImage: () => ipcRenderer.sendSync('clipboard:image'),
+
+  // Pictures pasted into a terminal, held by the main process so they outlive
+  // a reload. See images.js.
+  images: {
+    list: (id) => ipcRenderer.invoke('images:list', { id }),
+    add: (id, n, url) => ipcRenderer.invoke('images:add', { id, n, url }),
+    remove: (id, key) => ipcRenderer.invoke('images:remove', { id, key }),
+    find: (id, n, snippet) => ipcRenderer.invoke('images:find', { id, n, snippet }),
+    onChanged: (cb) => ipcRenderer.on('images:changed', (_e, payload) => cb(payload)),
+  },
 });

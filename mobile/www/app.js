@@ -1,6 +1,6 @@
 'use strict';
 
-/* global createClient, Terminal, Unicode11Addon */
+/* global createClient, Terminal, Unicode11Addon, PastedImages */
 
 /**
  * Hangar, on a phone.
@@ -106,6 +106,8 @@ const client = createClient({
   recent: onRecent,
   usage: onUsage,
   info: onInfo,
+  images: onImages,
+  image: onImage,
   error: (m) => toast(m.message),
 });
 
@@ -647,6 +649,7 @@ function onExit({ id }) {
   sessions.delete(id);
   const view = views.get(id);
   if (view) {
+    if (view.images) { view.images.dispose(); view.scanner.dispose(); }
     view.term.dispose();
     view.el.remove();
     views.delete(id);
@@ -741,10 +744,71 @@ function makeView(session) {
   term.open(el);
   term.onData((data) => client.send({ t: 'input', id: session.id, data }));
 
-  const view = { term, el };
+  const view = { term, el, imageList: [] };
+  wireImages(view, session.id);
   wireTouchScroll(view);
   views.set(session.id, view);
   return view;
+}
+
+// ---------------------------------------------------------- pasted images
+
+/**
+ * Pictures pasted into a terminal on the PC, shown over it here the same way
+ * the window shows them (renderer/pasted-images.js, copied into vendor/).
+ *
+ * The PC sends the list — numbers and keys — whenever it changes, and each
+ * picture is fetched once, by key, because they are megabytes apiece.
+ */
+const imageUrls = new Map();     // key -> data URL
+const imageOwner = new Map();    // key -> terminal id
+const imageAsked = new Set();    // keys requested and not yet answered
+
+function wireImages(view, id) {
+  if (typeof PastedImages === 'undefined') return;
+  view.images = PastedImages.createImageTray({
+    host: view.el,
+    term: view.term,
+    touch: true,
+    remove: (key) => client.send({ t: 'imageRemove', id, key }),
+  });
+  view.scanner = PastedImages.createPlaceholderScanner({
+    term: view.term,
+    knows: (n) => view.images.knows(n),
+    ask: (n, snippet) => client.send({ t: 'imageFind', id, n, snippet }),
+  });
+}
+
+function paintImages(view) {
+  if (!view.images) return;
+  view.images.set(view.imageList.map((img) => ({ ...img, url: imageUrls.get(img.key) })));
+}
+
+function onImages({ id, images }) {
+  const list = Array.isArray(images) ? images : [];
+  const keep = new Set(list.map((img) => img.key));
+  for (const [key, owner] of imageOwner) {
+    if (owner === id && !keep.has(key)) { imageOwner.delete(key); imageUrls.delete(key); }
+  }
+
+  const view = views.get(id);
+  if (!view) return;
+  view.imageList = list;
+  for (const img of list) {
+    imageOwner.set(img.key, id);
+    if (imageUrls.has(img.key) || imageAsked.has(img.key)) continue;
+    imageAsked.add(img.key);
+    client.send({ t: 'image', id, key: img.key });
+  }
+  paintImages(view);
+}
+
+function onImage({ id, key, url }) {
+  imageAsked.delete(key);
+  if (!url || imageOwner.get(key) !== id) return;
+  imageUrls.set(key, url);
+  const view = views.get(id);
+  if (view) paintImages(view);
 }
 
 /**

@@ -148,6 +148,14 @@ never handed to the renderer — the renderer receives two percentages and a res
 Nothing is written back to that file. Delete `usage.js` and the feature simply hides
 itself. If you have no credentials file, the bars never appear and no request is made.
 
+**Your clipboard and Claude's transcripts.** When you paste into a terminal, Hangar reads
+the clipboard (in the main process), and if it holds a picture it keeps a copy in memory so
+the picture can be shown over the terminal once Claude prints `[Image #N]` for it. For a
+chat resumed after Hangar was closed, it reads those pictures back out of Claude's own
+transcripts in `~/.claude/projects/<project>/*.jsonl` (`images.js`). Both are read-only and
+held in memory only: nothing is written, and nothing leaves the machine except to a paired
+phone that is looking at that terminal.
+
 **Files it writes.** Four places, all of them yours, and only one of them off by default:
 
 - The backup folder you chose, if you turned backups on at all — a mirror of each project

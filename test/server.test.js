@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import WebSocket from 'ws';
 import { createServer } from '../server.js';
+import { createImageStore } from '../images.js';
 import { createSessions } from '../sessions.js';
 import { createDevices } from '../devices.js';
 
@@ -79,6 +80,7 @@ describe('the server a phone talks to', () => {
   let port;
   let phones;
   let agentId;
+  let images;
 
   beforeEach(async () => {
     agentId = 'claude';
@@ -88,10 +90,15 @@ describe('the server a phone talks to', () => {
     });
     devices = createDevices({ random: counterRandom() });
     phones = [];
+    images = createImageStore({ readFile: async () => '', readdir: async () => [], stat: async () => ({}) });
+    sessions.on('session', ({ kind, session }) => {
+      if (kind === 'created') images.open(session.id, { cwd: session.projectPath, command: session.command });
+    });
 
     server = createServer({
       sessions,
       devices,
+      images,
       listProjects: () => ({ root: 'C:\\work', projects: [{ name: 'demo', path: 'C:\\work\\demo' }], ignored: [] }),
       createProject: (name) => ({ ok: true, project: { name, path: `C:\\work\\${name}` }, projects: [] }),
       usage: async () => ({ available: false }),
@@ -225,6 +232,24 @@ describe('the server a phone talks to', () => {
     const data = await p.next('data', (m) => m.data.includes('hello'));
     expect(data.id).toBe(created.session.id);
     expect(data.seq).toBe(20);
+  });
+
+  it('sends a phone the pasted pictures list, and each picture on request', async () => {
+    const p = await paired();
+    p.send({ t: 'create', ref: 1, projectPath: 'C:\\work\\demo', projectName: 'demo', command: 'claude' });
+    const { session } = await p.next('created');
+
+    images.add(session.id, 1, 'data:image/png;base64,iVBORw0KGgo=');
+    const listed = await p.next('images', (m) => m.images.length === 1);
+    expect(listed.id).toBe(session.id);
+    expect(listed.images[0]).toEqual({ key: expect.any(String), n: 1 });
+    expect(listed.images[0].url).toBeUndefined();
+
+    p.send({ t: 'image', id: session.id, key: listed.images[0].key });
+    expect((await p.next('image')).url).toBe('data:image/png;base64,iVBORw0KGgo=');
+
+    p.send({ t: 'imageRemove', id: session.id, key: listed.images[0].key });
+    expect((await p.next('images', (m) => m.images.length === 0)).images).toEqual([]);
   });
 
   it('tells a phone what claude has been used for in a project', async () => {

@@ -1,7 +1,7 @@
 'use strict';
 
 const {
-  app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, screen, dialog, shell: electronShell,
+  app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, screen, dialog, shell: electronShell, clipboard,
 } = require('electron');
 const path = require('path');
 const os = require('os');
@@ -23,6 +23,7 @@ const { recentFor: recentCodexFor } = require('./codex-sessions');
 const { recentAll } = require('./recent-sessions');
 const { createDevices, DEVICES_FILE } = require('./devices');
 const { createServer } = require('./server');
+const { createImageStore } = require('./images');
 const { lanAddresses, startResponder, DISCOVERY_PORT } = require('./discovery');
 const firewall = require('./firewall');
 const { loginItem, startedHidden } = require('./startup');
@@ -825,6 +826,22 @@ sessions.on('session', (payload) => {
   paintTray();
 });
 
+// Pictures pasted into each terminal. Kept here rather than in the window so a
+// reload, or a phone, can ask for them; refilled from Claude's own transcript
+// for a chat resumed after Hangar was closed. See `images.js`.
+const images = createImageStore({
+  log: (line) => { if (process.env.HANGAR_DEBUG) console.log(`[images] ${line}`); },
+});
+sessions.on('session', ({ kind, session }) => {
+  if (kind === 'created') images.open(session.id, { cwd: session.projectPath, command: session.command }).catch(() => {});
+  if (kind === 'closed') images.close(session.id);
+});
+images.on('changed', ({ id }) => toWindow('images:changed', { id }));
+ipcMain.handle('images:list', (_event, { id }) => images.list(id));
+ipcMain.handle('images:add', (_event, { id, n, url }) => images.add(id, n, url));
+ipcMain.handle('images:remove', (_event, { id, key }) => images.remove(id, key));
+ipcMain.handle('images:find', (_event, { id, n, snippet }) => images.find(id, n, snippet).catch(() => false));
+
 // --------------------------------------------------------------- resources
 
 /**
@@ -968,6 +985,16 @@ ipcMain.on('pty:flow', (_event, { id, pause }) => sessions.flow(id, pause));
 
 ipcMain.on('pty:kill', (_event, { id }) => sessions.kill(id));
 
+// The clipboard, answered here because the renderer's preload is sandboxed and
+// Electron no longer hands `clipboard` to a sandboxed preload. Synchronous so a
+// paste reads the clipboard at the moment of the keypress, as it always did.
+ipcMain.on('clipboard:write', (_e, text) => clipboard.writeText(String(text)));
+ipcMain.on('clipboard:read', (e) => { e.returnValue = clipboard.readText(); });
+ipcMain.on('clipboard:image', (e) => {
+  const image = clipboard.readImage();
+  e.returnValue = image.isEmpty() ? null : image.toDataURL();
+});
+
 ipcMain.on('win:fullscreen', () => {
   if (win) win.setFullScreen(!win.isFullScreen());
 });
@@ -990,6 +1017,7 @@ function projectListing() {
 
 const server = createServer({
   sessions,
+  images,
   devices,
   listProjects: projectListing,
   createProject: (name) => {

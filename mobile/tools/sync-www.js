@@ -24,6 +24,9 @@ const FILES = [
   ['@xterm/xterm/lib/xterm.js', 'xterm.js'],
   ['@xterm/xterm/css/xterm.css', 'xterm.css'],
   ['@xterm/addon-unicode11/lib/addon-unicode11.js', 'addon-unicode11.js'],
+  // Not from node_modules: the window's own pasted-image tray, so the phone
+  // shows pictures exactly the way the PC does.
+  ['../renderer/pasted-images.js', 'pasted-images.js'],
 ];
 
 fs.mkdirSync(vendor, { recursive: true });
