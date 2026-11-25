@@ -231,6 +231,7 @@ describe('readLive', () => {
     readdir: () => Object.keys(files),
     readFile: (file) => files[file.replace(/^.*[\\/]/, '')],
     alive: (pid) => pid !== 99999,
+    bootedAt: 0,
   };
 
   it('lists the claudes that are actually running', () => {
@@ -238,6 +239,10 @@ describe('readLive', () => {
       { id: ID.a, cwd: HANGAR, name: 'hangar-71', startedAt: 900 },
       { id: ID.b, cwd: OTHER, name: 'realms-b8', startedAt: 800 },
     ]);
+  });
+
+  it('ignores a file left by a crash before this boot, even when its pid is reused', () => {
+    expect(readLive({ ...deps, bootedAt: 850 }).map((row) => row.id)).toEqual([ID.a]);
   });
 
   it('answers nothing when claude has never run here', () => {

@@ -220,10 +220,11 @@ function sessionsIn(entries, projectPath, platform) {
  * of "alive".
  *
  * Claude removes its own file on the way out, so this only matters for one that
- * was killed or crashed. It cannot tell a reused pid from the original, so a
- * long-dead session can in principle come back marked live — the cost of that
- * is one row you have to resume from a terminal instead of from this menu,
- * which is a great deal cheaper than two claudes writing one transcript.
+ * was killed or crashed. It cannot tell a reused pid from the original. The
+ * commonest case of that — a crash or forced restart, after which Windows hands
+ * the same small pids straight back out — is caught in `readLive` by the file
+ * predating the boot. A reuse within one boot can still mark a dead session
+ * live, which is a great deal cheaper than two claudes writing one transcript.
  */
 function pidAlive(pid, kill = process.kill.bind(process)) {
   if (typeof pid !== 'number' || !Number.isInteger(pid) || pid <= 0) return false;
@@ -242,6 +243,9 @@ function readLive(deps = {}) {
     readdir = fs.readdirSync,
     readFile = fs.readFileSync,
     alive = pidAlive,
+    // A file written before this boot cannot be a running process, whatever
+    // now holds its pid. A minute of slack for the two clocks disagreeing.
+    bootedAt = Date.now() - os.uptime() * 1000 - 60_000,
   } = deps;
 
   const dir = path.join(claudeHome(env), LIVE_DIR);
@@ -265,6 +269,7 @@ function readLive(deps = {}) {
     }
 
     if (!entry || !isSessionId(entry.sessionId) || typeof entry.cwd !== 'string') continue;
+    if (typeof entry.startedAt === 'number' && entry.startedAt < bootedAt) continue;
     if (!alive(entry.pid)) continue;
 
     out.push({
