@@ -2064,7 +2064,12 @@ function pasteClipboard() {
   const tab = tabs.get(activeId);
   const text = api.paste();
   if (tab && tab.paste) tab.paste.arm();
-  if (tab && text) sendInput(tab, text);
+  // Through xterm rather than straight to the pty: it turns CRLF into CR and
+  // wraps the text in bracketed-paste markers when the program asked for them,
+  // so Claude Code knows exactly where the paste starts and ends instead of
+  // guessing from timing. Comes back out through onData, so sendInput still
+  // sees it.
+  if (tab && text) tab.term.paste(text);
 }
 
 // Windows Terminal behaviour: right-click copies a selection if there is one,
